@@ -27,6 +27,102 @@ public class NeteaseOpenApiClient
 
     public bool HasCookie => !string.IsNullOrWhiteSpace(_cookie);
 
+    /// <summary>排行榜列表（/api/toplist，63 个榜单；榜单可当歌单打开）</summary>
+    public async Task<List<OnlinePlaylist>> GetToplistsAsync()
+    {
+        try
+        {
+            using var doc = await GetJsonAsync("https://music.163.com/api/toplist");
+            if (doc == null || !doc.RootElement.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array)
+                return new List<OnlinePlaylist>();
+            var result = new List<OnlinePlaylist>();
+            foreach (var t in list.EnumerateArray())
+            {
+                result.Add(new OnlinePlaylist
+                {
+                    Id = t.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
+                    Platform = "netease",
+                    Name = t.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    CoverUrl = ToHttps(t.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null),
+                    Description = t.TryGetProperty("description", out var d) ? d.GetString() : null,
+                    SongCount = t.TryGetProperty("total", out var tc) ? tc.GetInt32() : 0,
+                });
+            }
+            return result;
+        }
+        catch { return new List<OnlinePlaylist>(); }
+    }
+
+    /// <summary>歌单搜索（cloudsearch type=1000）</summary>
+    public async Task<List<OnlinePlaylist>> SearchPlaylistsAsync(string keyword, int limit = 20)
+    {
+        try
+        {
+            var body = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["s"] = keyword, ["type"] = "1000", ["offset"] = "0", ["limit"] = limit.ToString()
+            });
+            var req = Build(HttpMethod.Post, "https://music.163.com/api/cloudsearch/pc");
+            req.Content = body;
+            using var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("playlists", out var pls) || pls.ValueKind != JsonValueKind.Array)
+                return new List<OnlinePlaylist>();
+            var list = new List<OnlinePlaylist>();
+            foreach (var pl in pls.EnumerateArray())
+            {
+                list.Add(new OnlinePlaylist
+                {
+                    Id = pl.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
+                    Platform = "netease",
+                    Name = pl.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    CoverUrl = ToHttps(pl.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null),
+                    Description = pl.TryGetProperty("description", out var d) ? d.GetString() : null,
+                    SongCount = pl.TryGetProperty("trackCount", out var tc) ? tc.GetInt32() : 0,
+                });
+            }
+            return list;
+        }
+        catch { return new List<OnlinePlaylist>(); }
+    }
+
+    /// <summary>歌手热门歌曲（搜歌手名 → 取第一个歌手 → 热门 50 首）</summary>
+    public async Task<List<OnlineSong>?> GetArtistHotSongsAsync(string artistName)
+    {
+        try
+        {
+            var body = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["s"] = artistName, ["type"] = "100", ["offset"] = "0", ["limit"] = "1"
+            });
+            var req = Build(HttpMethod.Post, "https://music.163.com/api/cloudsearch/pc");
+            req.Content = body;
+            using var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array ||
+                artists.GetArrayLength() == 0)
+                return null;
+            var artistId = artists[0].TryGetProperty("id", out var idEl) ? idEl.GetInt64() : 0;
+            if (artistId == 0) return null;
+
+            using var doc2 = await GetJsonAsync($"https://music.163.com/api/artist/top/song?id={artistId}");
+            if (doc2 == null || !doc2.RootElement.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+                return null;
+            var list = new List<OnlineSong>();
+            foreach (var s in songs.EnumerateArray())
+            {
+                var song = ParseSong(s);
+                if (song != null) list.Add(song);
+            }
+            return list;
+        }
+        catch { return null; }
+    }
+
     /// <summary>搜索歌曲（/api/cloudsearch/pc）</summary>
     public async Task<List<OnlineSong>?> SearchSongsAsync(string keyword, int page = 1, int pageSize = 20)
     {

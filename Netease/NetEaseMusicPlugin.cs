@@ -63,4 +63,8 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin
     /// <summary>每日推荐歌曲</summary>
     public Task<List<OnlineSong>?> GetDailyRecommendAsync(int num = 20)
         => _client.GetDailyRecommendAsync(num);
+
+    /// <summary>排行榜列表</summary>
+    public Task<List<OnlinePlaylist>> GetToplistsAsync()
+        => _client.GetToplistsAsync();
 }
