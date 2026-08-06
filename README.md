@@ -1,4 +1,4 @@
-# CatClawMusic.Plugins
+# CatClawMusic.Plugins.OnlineMusic
 
 猫爪音乐（CatClawMusic）的**在线音乐音源插件**工程，独立于宿主应用编译与交付。
 
@@ -20,7 +20,7 @@ dotnet build -c Release
 产物：`bin/Release/net10.0/CatClawMusic.Plugins.OnlineMusic.dll`
 
 > 依赖：需要宿主仓库 `CatClawMusic` 中的 `CatClawMusic.Core` 工程（接口与模型定义，
-> `CatClawMusic.Plugins.csproj` 以相对路径引用 `..\CatClawMusic\CatClawMusic.Core`）。
+> `CatClawMusic.Plugins.OnlineMusic.csproj` 以相对路径引用 `..\CatClawMusic\CatClawMusic.Core`）。
 
 ## 协议
 
