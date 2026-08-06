@@ -4,15 +4,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>CatClawMusic.Plugins</RootNamespace>
-    <AssemblyName>CatClawMusic.Plugins.OnlineMusic</AssemblyName>
+    <RootNamespace>CatClawMusic.Plugins.Netease</RootNamespace>
+    <AssemblyName>CatClawMusic.Plugins.Netease</AssemblyName>
     <!-- 插件以独立 DLL 交付，不携带依赖（Core 由宿主提供） -->
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 独立插件工程：Core 来自宿主仓库（D:\Code\CatClawMusic），构建时按需引用，产物不携带依赖 -->
-    <ProjectReference Include="..\CatClawMusic\CatClawMusic.Core\CatClawMusic.Core.csproj" />
+    <ProjectReference Include="..\CatClawMusic.Core\CatClawMusic.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,7 +21,7 @@
 
   <Target Name="PackageCcp" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <Copy SourceFiles="$(TargetPath)"
-          DestinationFiles="$(OutDir)CatClawMusic.Plugins.OnlineMusic.ccp"
+          DestinationFiles="$(OutDir)CatClawMusic.Plugins.Netease.ccp"
           SkipUnchangedFiles="true" />
   </Target>
 
