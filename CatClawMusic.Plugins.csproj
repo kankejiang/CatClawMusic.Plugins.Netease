@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CatClawMusic.Plugins</RootNamespace>
+    <AssemblyName>CatClawMusic.Plugins.OnlineMusic</AssemblyName>
+    <!-- 插件以独立 DLL 交付，不携带依赖（Core 由宿主提供） -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 独立插件工程：Core 来自宿主仓库（D:\Code\CatClawMusic），构建时按需引用，产物不携带依赖 -->
+    <ProjectReference Include="..\CatClawMusic\CatClawMusic.Core\CatClawMusic.Core.csproj" />
+  </ItemGroup>
+
+</Project>
