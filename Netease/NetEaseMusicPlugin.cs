@@ -18,6 +18,9 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
 {
     private readonly NeteaseOpenApiClient _client = new();
 
+    /// <summary>整页 VM 插件级单例（FM 电台常驻，页面开关不影响电台与补货）</summary>
+    private static NeteaseOnlineMusicViewModel? _sharedVm;
+
     /// <summary>音质档位持久化文件</summary>
     private static readonly string QualityFilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -58,8 +61,11 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
     {
         var queue = services.GetRequiredService<CatClawMusic.Core.Services.PlayQueue>();
         var audioPlayer = services.GetRequiredService<CatClawMusic.Core.Interfaces.IAudioPlayerService>();
-        var vm = new NeteaseOnlineMusicViewModel(this, queue, audioPlayer);
-        return new NeteaseOnlineMusicPage(vm, services);
+        // VM 插件级单例：私人漫游（FM）电台是全局播放行为，与页面开关无关。
+        // 若每次进入都 new VM，页面 OnDisappearing→Detach 会调用 LeaveFmMode 杀死正在播放的电台；
+        // 单例化后事件订阅/补货 Timer 常驻，页面生命周期不再影响电台，也避免多实例并发补货。
+        _sharedVm ??= new NeteaseOnlineMusicViewModel(this, queue, audioPlayer);
+        return new NeteaseOnlineMusicPage(_sharedVm, services);
     }
 
     // ── IDiscoverTabPlugin 子 tab 已移除：发现页子 tab 与整页入口功能重叠，统一走 IViewContributorPlugin 整页入口 ──
