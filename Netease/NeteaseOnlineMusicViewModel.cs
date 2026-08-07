@@ -691,6 +691,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         IsFmMode = true;
         if (_fmSavedPlayMode == null) _fmSavedPlayMode = _queue.PlayMode;
         _queue.PlayMode = PlayMode.Sequential; // FM 为顺序无限电台，不循环早期歌曲
+        _queue.IsFmMode = true;  // 通知宿主模式按钮切换为"无限"显示
 
         var target = temp.FirstOrDefault(s => s.RemoteId == $"{clicked.Platform}:{clicked.Id}") ?? temp[0];
         _queue.SelectSong(target.Id);
@@ -703,6 +704,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         if (!IsFmMode && _fmSavedPlayMode == null) return;
         IsFmMode = false;
+        _queue.IsFmMode = false;  // 通知宿主模式按钮恢复普通循环
         if (_fmSavedPlayMode is PlayMode saved)
         {
             _queue.PlayMode = saved;
