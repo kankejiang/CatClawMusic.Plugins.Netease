@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using CatClawMusic.Core.Models;
 
@@ -7,6 +8,7 @@ namespace CatClawMusic.Plugins.Netease;
 /// 网易云开放接口客户端（老 web API：匿名优先 + 可选用户 Cookie 增强）。
 /// 覆盖：搜索 / 歌单广场 / 歌单详情 / 播放直链（outer 外链 + enhance + 公共 API 三级兜底）/
 /// 歌词 / 私人漫游（radio.get）/ 每日推荐（v3 discovery）。
+/// 登录：由宿主 WebView 打开 music.163.com 登录页，提取 Cookie 后回传 SetCookie。
 /// 全部接口实测可用（2026-08），播放直链/封面统一 https。
 /// </summary>
 public class NeteaseOpenApiClient
@@ -14,9 +16,19 @@ public class NeteaseOpenApiClient
     private readonly HttpClient _http;
     private string? _cookie;
 
+    /// <summary>用户 Cookie 持久化文件（宿主与插件约定的路径）</summary>
+    private static readonly string CookieFilePath =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CatClawMusic.Maui", "netease_cookie.txt");
+
+    private static readonly string NicknameFilePath =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CatClawMusic.Maui", "netease_nickname.txt");
+
     public NeteaseOpenApiClient()
     {
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        // 禁用自动 Cookie 管理：二维码登录/播放直链需精确控制携带的 Cookie（用户 Cookie 优先）
+        _http = new HttpClient(new HttpClientHandler { UseCookies = false }) { Timeout = TimeSpan.FromSeconds(20) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         _http.DefaultRequestHeaders.Referrer = new Uri("https://music.163.com/");
@@ -26,6 +38,86 @@ public class NeteaseOpenApiClient
     public void SetCookie(string? cookie) => _cookie = cookie;
 
     public bool HasCookie => !string.IsNullOrWhiteSpace(_cookie);
+
+    /// <summary>
+    /// 浏览器登录配置：宿主 WebView 打开 music.163.com 登录页，
+    /// 用户登录后从 WebView 提取 MUSIC_U 等 Cookie 回传 <see cref="ApplyLoginCookie"/>。
+    /// </summary>
+    public Task<BrowserLoginInfo?> GetBrowserLoginInfoAsync()
+    {
+        return Task.FromResult<BrowserLoginInfo?>(new BrowserLoginInfo
+        {
+            LoginUrl = "https://music.163.com/#/login",
+            CookieDomain = "music.163.com",
+            SuccessCookieNames = new List<string> { "MUSIC_U" },
+            // 登录成功后通常跳转到首页或个人页
+            SuccessUrlPattern = "music.163.com/#/m/loginsuccess",
+            Title = "网易云登录"
+        });
+    }
+
+    /// <summary>
+    /// 接收宿主从 WebView 提取的完整 Cookie 字符串，持久化并刷新内存状态。
+    /// </summary>
+    public Task ApplyLoginCookieAsync(string cookie)
+    {
+        if (!string.IsNullOrWhiteSpace(cookie))
+        {
+            _cookie = cookie;
+            PersistCookie(cookie);
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>已登录账号昵称（/api/nuser/account/get 实名验证；失败回退本地缓存）</summary>
+    public async Task<string?> GetAccountNameAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_cookie)) return null;
+        try
+        {
+            using var doc = await GetJsonAsync("https://music.163.com/api/nuser/account/get");
+            if (doc != null && doc.RootElement.TryGetProperty("profile", out var p) &&
+                p.TryGetProperty("nickname", out var n) && !string.IsNullOrWhiteSpace(n.GetString()))
+            {
+                var nickname = n.GetString();
+                if (!string.IsNullOrWhiteSpace(nickname))
+                {
+                    try { File.WriteAllText(NicknameFilePath, nickname); } catch { }
+                }
+                return nickname;
+            }
+        }
+        catch { }
+        // 兜底：读取登录时缓存的昵称
+        try
+        {
+            if (File.Exists(NicknameFilePath))
+                return File.ReadAllText(NicknameFilePath).Trim();
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>退出登录：清空内存 Cookie 并删除持久化文件</summary>
+    public async Task LogoutAsync()
+    {
+        _cookie = null;
+        await Task.CompletedTask;
+        try { if (File.Exists(CookieFilePath)) File.Delete(CookieFilePath); } catch { }
+        try { if (File.Exists(NicknameFilePath)) File.Delete(NicknameFilePath); } catch { }
+    }
+
+    /// <summary>持久化登录 Cookie（供插件 InitializeAsync 重启后恢复）</summary>
+    private void PersistCookie(string cookie)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(CookieFilePath);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(CookieFilePath, cookie);
+        }
+        catch { }
+    }
 
     /// <summary>排行榜列表（/api/toplist，63 个榜单；榜单可当歌单打开）</summary>
     public async Task<List<OnlinePlaylist>> GetToplistsAsync()
@@ -204,21 +296,33 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>私人漫游（随机推荐 /api/v1/radio/get）</summary>
+    /// <summary>
+    /// 私人漫游（随机推荐 /api/v1/radio/get）。
+    /// 该接口一次通常只返回 1 首（网易云私人 FM 模型），故循环拉取并去重，
+    /// 直到凑齐 <paramref name="num"/> 首或达到安全上限，模拟官方"无限电台"的首批缓冲。
+    /// </summary>
     public async Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10)
     {
         try
         {
-            using var doc = await GetJsonAsync($"https://music.163.com/api/v1/radio/get?limit={num}");
-            if (doc == null || !doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-                return null;
-            var list = new List<OnlineSong>();
-            foreach (var s in data.EnumerateArray())
+            var collected = new List<OnlineSong>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            int attempts = 0;
+            int maxAttempts = num * 3; // 安全上限，避免接口异常时死循环
+            while (collected.Count < num && attempts < maxAttempts)
             {
-                var song = ParseSong(s);
-                if (song != null) list.Add(song);
+                attempts++;
+                using var doc = await GetJsonAsync("https://music.163.com/api/v1/radio/get");
+                if (doc == null || !doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                    break;
+                foreach (var s in data.EnumerateArray())
+                {
+                    var song = ParseSong(s);
+                    if (song != null && !string.IsNullOrWhiteSpace(song.Id) && seen.Add(song.Id))
+                        collected.Add(song);
+                }
             }
-            return list;
+            return collected.Count > 0 ? collected : null;
         }
         catch { return null; }
     }
