@@ -910,12 +910,17 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         return added;
     }
 
-    /// <summary>页面消失时解绑事件、退出 FM 模式，避免悬挂的事件处理器持续追加歌曲</summary>
+    /// <summary>
+    /// 页面消失时的轻量清理。
+    /// 注意：VM 为插件级单例，私人漫游（FM）电台是全局播放行为——【不】在此退出 FM、
+    /// 【不】解绑播放完成事件、【不】停补货 Timer，否则打开播放页（本页 OnDisappearing）
+    /// 会杀死正在播放的电台（按钮恢复普通循环、补货失效、3 首播完即断）。
+    /// FM 退出由用户明确操作触发：搜索/每日推荐/普通播放/打开歌单（对应各方法内的 LeaveFmMode）。
+    /// </summary>
     public void Detach()
     {
-        _audioPlayer.PlaybackCompleted -= OnAudioPlaybackCompleted;
-        LeaveFmMode();
-        _fmSongIds.Clear();
+        // 仅非 FM 时清空历史 id 集，避免内存增长；FM 期间保留（补货去重依赖）
+        if (!IsFmMode) _fmSongIds.Clear();
     }
 
     // ── 登录 ──
