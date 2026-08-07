@@ -835,28 +835,49 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         await AppendFmBatchAsync();
     }
 
-    /// <summary>向私人漫游队列追加一批新歌（去重后入队尾）</summary>
+    /// <summary>向私人漫游队列追加一批新歌（去重后入队尾）；若去重后无新歌，放宽去重重试一次保证电台不断</summary>
     private async Task AppendFmBatchAsync()
     {
         _fmAppending = true;
         try
         {
-            var batch = await _plugin.GetPrivateFmAsync(FmBatchSize);
-            if (batch == null) return;
-            foreach (var os in batch)
+            int added = await AppendFmBatchCoreAsync(allowDuplicate: false);
+            if (added == 0)
             {
-                if (os == null || string.IsNullOrWhiteSpace(os.Id) || _fmSongIds.Contains(os.Id)) continue;
-                string? url = null;
-                try { url = await _plugin.GetPlayUrlAsync(os, QualityLevel); } catch { }
-                if (string.IsNullOrWhiteSpace(url)) continue;
-                os.Internal ??= new Dictionary<string, object>();
-                os.Internal["FromFm"] = true;
-                _queue.AddToEnd(NeteasePlaybackHelper.ToQueueSong(os, url));
-                _fmSongIds.Add(os.Id);
+                // 全部被 _fmSongIds 去重（网易云接口常返回固定候选集）或取不到直链：
+                // 放宽去重再拉一次，允许少量重复，保证电台不中断
+                System.Diagnostics.Debug.WriteLine("[NetEaseFM] 补货首批全部去重/失败，放宽去重重试");
+                added = await AppendFmBatchCoreAsync(allowDuplicate: true);
             }
+            if (added == 0)
+                System.Diagnostics.Debug.WriteLine("[NetEaseFM] 补货失败（接口无返回或无直链），队列即将耗尽");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[NetEaseFM] 补货异常: {ex.Message}");
+        }
         finally { _fmAppending = false; }
+    }
+
+    private async Task<int> AppendFmBatchCoreAsync(bool allowDuplicate)
+    {
+        var batch = await _plugin.GetPrivateFmAsync(FmBatchSize);
+        if (batch == null) return 0;
+        int added = 0;
+        foreach (var os in batch)
+        {
+            if (os == null || string.IsNullOrWhiteSpace(os.Id)) continue;
+            if (!allowDuplicate && _fmSongIds.Contains(os.Id)) continue;
+            string? url = null;
+            try { url = await _plugin.GetPlayUrlAsync(os, QualityLevel); } catch { }
+            if (string.IsNullOrWhiteSpace(url)) continue;
+            os.Internal ??= new Dictionary<string, object>();
+            os.Internal["FromFm"] = true;
+            _queue.AddToEnd(NeteasePlaybackHelper.ToQueueSong(os, url));
+            _fmSongIds.Add(os.Id);
+            added++;
+        }
+        return added;
     }
 
     /// <summary>页面消失时解绑事件、退出 FM 模式，避免悬挂的事件处理器持续追加歌曲</summary>
