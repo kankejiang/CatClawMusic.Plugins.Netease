@@ -45,8 +45,8 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
     /// <summary>发现页入口显示标题</summary>
     public string EntryTitle => "网易云音乐";
 
-    /// <summary>发现页入口图标（Emoji）</summary>
-    public string EntryIcon => "🎵";
+    /// <summary>发现页入口图标：本地 PNG 路径（宿主 Image 自动渲染；emoji/文本也兼容）</summary>
+    public string EntryIcon => @"C:\Users\lvjin\Downloads\netease_icon.png";
 
     /// <summary>
     /// 创建入口页面实例。宿主在用户点击入口时调用此方法，
