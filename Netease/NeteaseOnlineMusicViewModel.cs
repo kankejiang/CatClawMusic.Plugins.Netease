@@ -8,6 +8,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.ApplicationModel;
+using Microsoft.Maui.Controls;
+using Microsoft.Maui.Dispatching;
 
 namespace CatClawMusic.Plugins.Netease;
 
@@ -51,6 +53,9 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     private PlayMode? _fmSavedPlayMode;
     private const int FmBatchSize = 8;       // 每次补充拉取的数量
     private const int FmBufferThreshold = 2; // 队列中剩余 FM 歌曲 ≤ 此值时开始补充
+
+    /// <summary>FM 缓冲定时兜底：宿主若不触发 PlaybackCompleted（Android 旧 APK 等），每 20 秒检查一次队列剩余并补货；与宿主事件路径并存（EnsureFmBufferAsync 内 _fmAppending 防重入）</summary>
+    private IDispatcherTimer? _fmBufferTimer;
 
     /// <summary>行内按钮（红心/垃圾桶）点击后短暂抑制紧随其后的列表 SelectionChanged（600ms 窗口）</summary>
     private DateTime _suppressSelectionUntil = DateTime.MinValue;
@@ -697,6 +702,28 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         _queue.SelectSong(target.Id);
         try { await _audioPlayer.PlayAsync(target.FilePath); }
         catch { ShowTip("播放失败，请重试"); }
+
+        // FM 缓冲定时兜底：宿主若不触发 PlaybackCompleted 事件（如 Android 旧 APK），定时检查并补货
+        EnsureFmBufferTimerStart();
+    }
+
+    /// <summary>启动 FM 缓冲定时兜底（每 20 秒检查一次，确保不依赖宿主 PlaybackCompleted 事件）</summary>
+    private void EnsureFmBufferTimerStart()
+    {
+        if (_fmBufferTimer != null) return;
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) return;
+        _fmBufferTimer = dispatcher.CreateTimer();
+        _fmBufferTimer.Interval = TimeSpan.FromSeconds(20);
+        _fmBufferTimer.IsRepeating = true;
+        _fmBufferTimer.Tick += OnFmBufferTimerTick;
+        _fmBufferTimer.Start();
+    }
+
+    private void OnFmBufferTimerTick(object? sender, EventArgs e)
+    {
+        // 定时兜底补货；EnsureFmBufferAsync 内部 _fmAppending 防与宿主事件路径重入
+        if (IsFmMode) _ = EnsureFmBufferAsync();
     }
 
     /// <summary>离开私人漫游电台模式（恢复用户原播放模式）</summary>
@@ -705,6 +732,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         if (!IsFmMode && _fmSavedPlayMode == null) return;
         IsFmMode = false;
         _queue.IsFmMode = false;  // 通知宿主模式按钮恢复普通循环
+        if (_fmBufferTimer != null) { _fmBufferTimer.Stop(); _fmBufferTimer = null; }
         if (_fmSavedPlayMode is PlayMode saved)
         {
             _queue.PlayMode = saved;
