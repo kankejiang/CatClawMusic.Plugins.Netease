@@ -11,11 +11,10 @@ namespace CatClawMusic.Plugins.Netease;
 /// 私人漫游（无限电台 + 垃圾桶）/ 每日推荐（歌曲+歌单）/ 我的歌单 / 红心 / 听歌打卡。
 /// <para>
 /// 同时实现 <see cref="IViewContributorPlugin"/>：向宿主贡献一个完整的"网易云音乐"入口页面，
-/// 以及 <see cref="IDiscoverTabPlugin"/>：向宿主发现页贡献内嵌子 tab，
 /// 由插件自治提供 UI 和业务逻辑。
 /// </para>
 /// </summary>
-public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IDiscoverTabPlugin
+public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
 {
     private readonly NeteaseOpenApiClient _client = new();
 
@@ -63,28 +62,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, ID
         return new NeteaseOnlineMusicPage(vm, services);
     }
 
-    // ── IDiscoverTabPlugin：向宿主发现页贡献「推荐」右侧内嵌子 tab ──
-
-    /// <summary>发现页子 tab 标题</summary>
-    public string TabTitle => "网易云";
-
-    /// <summary>发现页子 tab 图标（Emoji）</summary>
-    public string TabIcon => "🎵";
-
-    /// <summary>排序权重：1 = 紧随「推荐」(0) 右侧</summary>
-    public int TabOrder => 1;
-
-    /// <summary>
-    /// 创建发现页子 tab 内嵌视图。复用一个 <see cref="NeteaseOnlineMusicViewModel"/>，
-    /// 宿主选中该 tab 时把返回的 <see cref="NeteaseDiscoverTabView"/> 挂载到面板区。
-    /// </summary>
-    public object CreateTabView(IServiceProvider services)
-    {
-        var queue = services.GetRequiredService<CatClawMusic.Core.Services.PlayQueue>();
-        var audioPlayer = services.GetRequiredService<CatClawMusic.Core.Interfaces.IAudioPlayerService>();
-        var vm = new NeteaseOnlineMusicViewModel(this, queue, audioPlayer);
-        return new NeteaseDiscoverTabView(vm, services);
-    }
+    // ── IDiscoverTabPlugin 子 tab 已移除：发现页子 tab 与整页入口功能重叠，统一走 IViewContributorPlugin 整页入口 ──
 
     /// <summary>来源平台标识</summary>
     public string PlatformName => "netease";
