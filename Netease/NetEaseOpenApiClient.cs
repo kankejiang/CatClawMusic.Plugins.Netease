@@ -6,10 +6,11 @@ namespace CatClawMusic.Plugins.Netease;
 
 /// <summary>
 /// 网易云开放接口客户端（老 web API：匿名优先 + 可选用户 Cookie 增强）。
-/// 覆盖：搜索 / 歌单广场 / 歌单详情 / 播放直链（outer 外链 + enhance + 公共 API 三级兜底）/
-/// 歌词 / 私人漫游（radio.get）/ 每日推荐（v3 discovery）。
+/// 覆盖：搜索（歌曲/歌单/歌手）/ 歌单广场（分页）/ 歌单详情 / 排行榜 / 歌手热门歌曲 /
+/// 歌手专辑 / 专辑歌曲 / 播放直链（音质三档 + 三级兜底 + 20 分钟直链缓存）/ 歌词 /
+/// 私人漫游（radio.get）/ 每日推荐（歌曲 + 歌单）/ 登录增强（我的歌单/红心/FM 垃圾桶/打卡）。
 /// 登录：由宿主 WebView 打开 music.163.com 登录页，提取 Cookie 后回传 SetCookie。
-/// 全部接口实测可用（2026-08），播放直链/封面统一 https。
+/// 播放直链/封面统一 https；封面 URL 带 ?param= 裁尺寸，节省流量。
 /// </summary>
 public class NeteaseOpenApiClient
 {
@@ -24,6 +25,20 @@ public class NeteaseOpenApiClient
     private static readonly string NicknameFilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "CatClawMusic.Maui", "netease_nickname.txt");
+
+    private static readonly string UidFilePath =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CatClawMusic.Maui", "netease_uid.txt");
+
+    // ── 播放直链缓存（songId:quality → (url, 过期时间)）──
+    private readonly Dictionary<string, (string Url, DateTime ExpireAt)> _urlCache = new();
+    private readonly object _urlCacheLock = new();
+    private static readonly TimeSpan UrlCacheTtl = TimeSpan.FromMinutes(20);
+
+    // ── 登录态派生缓存 ──
+    private long? _userId;
+    private string? _likedPlaylistId;
+    private HashSet<string>? _likedSongIds;
 
     public NeteaseOpenApiClient()
     {
@@ -41,7 +56,7 @@ public class NeteaseOpenApiClient
 
     /// <summary>
     /// 浏览器登录配置：宿主 WebView 打开 music.163.com 登录页，
-    /// 用户登录后从 WebView 提取 MUSIC_U 等 Cookie 回传 <see cref="ApplyLoginCookie"/>。
+    /// 用户登录后从 WebView 提取 MUSIC_U 等 Cookie 回传 <see cref="ApplyLoginCookieAsync"/>。
     /// </summary>
     public Task<BrowserLoginInfo?> GetBrowserLoginInfoAsync()
     {
@@ -65,6 +80,10 @@ public class NeteaseOpenApiClient
         {
             _cookie = cookie;
             PersistCookie(cookie);
+            // 新账号登录：清空上一个账号的派生缓存
+            _userId = null;
+            _likedPlaylistId = null;
+            _likedSongIds = null;
         }
         return Task.CompletedTask;
     }
@@ -76,15 +95,23 @@ public class NeteaseOpenApiClient
         try
         {
             using var doc = await GetJsonAsync("https://music.163.com/api/nuser/account/get");
-            if (doc != null && doc.RootElement.TryGetProperty("profile", out var p) &&
-                p.TryGetProperty("nickname", out var n) && !string.IsNullOrWhiteSpace(n.GetString()))
+            if (doc != null && doc.RootElement.TryGetProperty("profile", out var p))
             {
-                var nickname = n.GetString();
-                if (!string.IsNullOrWhiteSpace(nickname))
+                // 顺带缓存 uid（我的歌单/红心需要）
+                if (p.TryGetProperty("userId", out var uidEl) && uidEl.TryGetInt64(out var uid) && uid > 0)
                 {
-                    try { File.WriteAllText(NicknameFilePath, nickname); } catch { }
+                    _userId = uid;
+                    try { File.WriteAllText(UidFilePath, uid.ToString()); } catch { }
                 }
-                return nickname;
+                if (p.TryGetProperty("nickname", out var n) && !string.IsNullOrWhiteSpace(n.GetString()))
+                {
+                    var nickname = n.GetString();
+                    if (!string.IsNullOrWhiteSpace(nickname))
+                    {
+                        try { File.WriteAllText(NicknameFilePath, nickname); } catch { }
+                    }
+                    return nickname;
+                }
             }
         }
         catch { }
@@ -98,13 +125,38 @@ public class NeteaseOpenApiClient
         return null;
     }
 
+    /// <summary>已登录用户 uid（内存 → 本地缓存 → 实时请求三级获取；未登录返回 null）</summary>
+    public async Task<long?> GetUserIdAsync()
+    {
+        if (_userId is long cached) return cached;
+        try
+        {
+            if (File.Exists(UidFilePath) && long.TryParse(File.ReadAllText(UidFilePath).Trim(), out var fuid) && fuid > 0)
+            {
+                _userId = fuid;
+                return fuid;
+            }
+        }
+        catch { }
+        if (!string.IsNullOrWhiteSpace(_cookie))
+        {
+            await GetAccountNameAsync(); // 顺带解析 uid
+            if (_userId is long uid) return uid;
+        }
+        return null;
+    }
+
     /// <summary>退出登录：清空内存 Cookie 并删除持久化文件</summary>
     public async Task LogoutAsync()
     {
         _cookie = null;
+        _userId = null;
+        _likedPlaylistId = null;
+        _likedSongIds = null;
         await Task.CompletedTask;
         try { if (File.Exists(CookieFilePath)) File.Delete(CookieFilePath); } catch { }
         try { if (File.Exists(NicknameFilePath)) File.Delete(NicknameFilePath); } catch { }
+        try { if (File.Exists(UidFilePath)) File.Delete(UidFilePath); } catch { }
     }
 
     /// <summary>持久化登录 Cookie（供插件 InitializeAsync 重启后恢复）</summary>
@@ -118,6 +170,8 @@ public class NeteaseOpenApiClient
         }
         catch { }
     }
+
+    // ════════════════ 排行榜 / 搜索 / 歌单 ════════════════
 
     /// <summary>排行榜列表（/api/toplist，63 个榜单；榜单可当歌单打开）</summary>
     public async Task<List<OnlinePlaylist>> GetToplistsAsync()
@@ -135,7 +189,7 @@ public class NeteaseOpenApiClient
                     Id = t.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
                     Platform = "netease",
                     Name = t.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    CoverUrl = ToHttps(t.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null),
+                    CoverUrl = CoverWithSize(ToHttps(t.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null), 500),
                     Description = t.TryGetProperty("description", out var d) ? d.GetString() : null,
                     SongCount = t.TryGetProperty("total", out var tc) ? tc.GetInt32() : 0,
                 });
@@ -164,30 +218,20 @@ public class NeteaseOpenApiClient
                 return new List<OnlinePlaylist>();
             var list = new List<OnlinePlaylist>();
             foreach (var pl in pls.EnumerateArray())
-            {
-                list.Add(new OnlinePlaylist
-                {
-                    Id = pl.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
-                    Platform = "netease",
-                    Name = pl.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    CoverUrl = ToHttps(pl.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null),
-                    Description = pl.TryGetProperty("description", out var d) ? d.GetString() : null,
-                    SongCount = pl.TryGetProperty("trackCount", out var tc) ? tc.GetInt32() : 0,
-                });
-            }
+                list.Add(ParsePlaylist(pl));
             return list;
         }
         catch { return new List<OnlinePlaylist>(); }
     }
 
-    /// <summary>歌手热门歌曲（搜歌手名 → 取第一个歌手 → 热门 50 首）</summary>
-    public async Task<List<OnlineSong>?> GetArtistHotSongsAsync(string artistName)
+    /// <summary>歌手搜索（cloudsearch type=100）</summary>
+    public async Task<List<NeteaseArtist>> SearchArtistsAsync(string keyword, int limit = 20)
     {
         try
         {
             var body = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["s"] = artistName, ["type"] = "100", ["offset"] = "0", ["limit"] = "1"
+                ["s"] = keyword, ["type"] = "100", ["offset"] = "0", ["limit"] = limit.ToString()
             });
             var req = Build(HttpMethod.Post, "https://music.163.com/api/cloudsearch/pc");
             req.Content = body;
@@ -195,14 +239,45 @@ public class NeteaseOpenApiClient
             var json = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("result", out var result) ||
-                !result.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array ||
-                artists.GetArrayLength() == 0)
-                return null;
-            var artistId = artists[0].TryGetProperty("id", out var idEl) ? idEl.GetInt64() : 0;
-            if (artistId == 0) return null;
+                !result.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array)
+                return new List<NeteaseArtist>();
+            var list = new List<NeteaseArtist>();
+            foreach (var a in artists.EnumerateArray())
+            {
+                if (!a.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                list.Add(new NeteaseArtist
+                {
+                    Id = idEl.GetInt64().ToString(),
+                    Name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    PicUrl = CoverWithSize(ToHttps(a.TryGetProperty("picUrl", out var p) ? p.GetString() : null), 300),
+                    SongCount = a.TryGetProperty("musicSize", out var ms) && ms.TryGetInt32(out var msv) ? msv : 0,
+                    AlbumCount = a.TryGetProperty("albumSize", out var abs) && abs.TryGetInt32(out var absv) ? absv : 0,
+                });
+            }
+            return list;
+        }
+        catch { return new List<NeteaseArtist>(); }
+    }
 
-            using var doc2 = await GetJsonAsync($"https://music.163.com/api/artist/top/song?id={artistId}");
-            if (doc2 == null || !doc2.RootElement.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+    /// <summary>歌手热门歌曲（搜歌手名 → 取第一个歌手 → 热门 50 首）</summary>
+    public async Task<List<OnlineSong>?> GetArtistHotSongsAsync(string artistName)
+    {
+        try
+        {
+            var artists = await SearchArtistsAsync(artistName, 1);
+            if (artists.Count == 0) return null;
+            return await GetArtistTopSongsAsync(artists[0].Id);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>歌手热门歌曲（/api/artist/top/song）</summary>
+    public async Task<List<OnlineSong>?> GetArtistTopSongsAsync(string artistId)
+    {
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/artist/top/song?id={artistId}");
+            if (doc == null || !doc.RootElement.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
                 return null;
             var list = new List<OnlineSong>();
             foreach (var s in songs.EnumerateArray())
@@ -215,7 +290,58 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>搜索歌曲（/api/cloudsearch/pc）</summary>
+    /// <summary>歌手专辑列表（/api/artist/albums/{id}）</summary>
+    public async Task<List<NeteaseAlbum>> GetArtistAlbumsAsync(string artistId, int limit = 50)
+    {
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/artist/albums/{artistId}?limit={limit}&offset=0");
+            if (doc == null || !doc.RootElement.TryGetProperty("hotAlbums", out var albums) || albums.ValueKind != JsonValueKind.Array)
+                return new List<NeteaseAlbum>();
+            var list = new List<NeteaseAlbum>();
+            foreach (var al in albums.EnumerateArray())
+            {
+                if (!al.TryGetProperty("id", out var idEl)) continue;
+                string artistName = "";
+                if (al.TryGetProperty("artist", out var ar) && ar.TryGetProperty("name", out var arn))
+                    artistName = arn.GetString() ?? "";
+                list.Add(new NeteaseAlbum
+                {
+                    Id = idEl.GetInt64().ToString(),
+                    Name = al.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    PicUrl = CoverWithSize(ToHttps(al.TryGetProperty("picUrl", out var p) ? p.GetString() : null), 300),
+                    SongCount = al.TryGetProperty("size", out var sz) && sz.TryGetInt32(out var szv) ? szv : 0,
+                    ArtistName = artistName,
+                    PublishYear = al.TryGetProperty("publishTime", out var pt) && pt.TryGetInt64(out var pts) && pts > 0
+                        ? DateTimeOffset.FromUnixTimeMilliseconds(pts).LocalDateTime.Year.ToString()
+                        : null,
+                });
+            }
+            return list;
+        }
+        catch { return new List<NeteaseAlbum>(); }
+    }
+
+    /// <summary>专辑内歌曲（/api/album/{id}）</summary>
+    public async Task<List<OnlineSong>?> GetAlbumSongsAsync(string albumId)
+    {
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/album/{albumId}?id={albumId}");
+            if (doc == null || !doc.RootElement.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+                return null;
+            var list = new List<OnlineSong>();
+            foreach (var s in songs.EnumerateArray())
+            {
+                var song = ParseSong(s);
+                if (song != null) list.Add(song);
+            }
+            return list;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>搜索歌曲（/api/cloudsearch/pc，支持分页）</summary>
     public async Task<List<OnlineSong>?> SearchSongsAsync(string keyword, int page = 1, int pageSize = 20)
     {
         try
@@ -244,32 +370,43 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>热门歌单（歌单广场 /api/playlist/list，支持分类）</summary>
-    public async Task<List<OnlinePlaylist>> GetPlaylistsAsync(string? category = null)
+    /// <summary>热门歌单（歌单广场 /api/playlist/list，支持分类 + 分页）</summary>
+    public async Task<List<OnlinePlaylist>> GetPlaylistsAsync(string? category = null, int page = 1, int pageSize = 60)
     {
         try
         {
             var cat = string.IsNullOrWhiteSpace(category) || category == "全部" ? "全部" : category.Trim();
-            var url = $"https://music.163.com/api/playlist/list?cat={Uri.EscapeDataString(cat)}&order=hot&limit=60&offset=0";
+            var offset = (page - 1) * pageSize;
+            var url = $"https://music.163.com/api/playlist/list?cat={Uri.EscapeDataString(cat)}&order=hot&limit={pageSize}&offset={offset}";
             using var doc = await GetJsonAsync(url);
             if (doc == null || !doc.RootElement.TryGetProperty("playlists", out var pls) || pls.ValueKind != JsonValueKind.Array)
                 return new List<OnlinePlaylist>();
             var list = new List<OnlinePlaylist>();
             foreach (var pl in pls.EnumerateArray())
-            {
-                list.Add(new OnlinePlaylist
-                {
-                    Id = pl.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
-                    Platform = "netease",
-                    Name = pl.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    CoverUrl = ToHttps(pl.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null),
-                    Description = pl.TryGetProperty("description", out var d) ? d.GetString() : null,
-                    SongCount = pl.TryGetProperty("trackCount", out var tc) ? tc.GetInt32() : 0,
-                });
-            }
+                list.Add(ParsePlaylist(pl));
             return list;
         }
         catch { return new List<OnlinePlaylist>(); }
+    }
+
+    /// <summary>官方歌单分类（/api/playlist/catalogue；失败返回 null，调用方回退硬编码列表）</summary>
+    public async Task<List<string>?> GetPlaylistCategoriesAsync()
+    {
+        try
+        {
+            using var doc = await GetJsonAsync("https://music.163.com/api/playlist/catalogue");
+            if (doc == null || !doc.RootElement.TryGetProperty("sub", out var sub) || sub.ValueKind != JsonValueKind.Array)
+                return null;
+            var list = new List<string> { "全部" };
+            foreach (var c in sub.EnumerateArray())
+            {
+                if (c.TryGetProperty("name", out var n) && !string.IsNullOrWhiteSpace(n.GetString()))
+                    list.Add(n.GetString()!);
+                if (list.Count >= 45) break; // 够用即可，避免 chips 过长
+            }
+            return list.Count > 1 ? list : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>歌单内歌曲（v6 歌单详情，n=1000 一次拉全）</summary>
@@ -295,6 +432,8 @@ public class NeteaseOpenApiClient
         }
         catch { return null; }
     }
+
+    // ════════════════ 私人漫游 / 每日推荐 ════════════════
 
     /// <summary>
     /// 私人漫游（随机推荐 /api/v1/radio/get）。
@@ -327,6 +466,31 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
+    /// <summary>私人漫游「垃圾桶」：不再推荐该歌曲（需登录；失败静默）</summary>
+    public async Task<bool> FmTrashAsync(string songId)
+    {
+        if (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(_cookie)) return false;
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/radio/trash?songId={songId}&time=25");
+            return doc != null && doc.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 200;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>私人漫游歌曲红心/取消红心（/api/radio/like，需登录）</summary>
+    public async Task<bool> FmLikeAsync(string songId, bool like)
+    {
+        if (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(_cookie)) return false;
+        try
+        {
+            using var doc = await GetJsonAsync(
+                $"https://music.163.com/api/radio/like?alg=itembased&songId={songId}&time=25&like={(like ? "true" : "false")}");
+            return doc != null && doc.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 200;
+        }
+        catch { return false; }
+    }
+
     /// <summary>每日推荐歌曲（/api/v3/discovery/recommend/songs；匿名可用，登录后个性化）</summary>
     public async Task<List<OnlineSong>?> GetDailyRecommendAsync(int num = 20)
     {
@@ -347,44 +511,214 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>播放直链（outer 外链 → enhance+cookie → 公共 API 实例 三级兜底）</summary>
-    public async Task<string?> GetPlayUrlAsync(string songId)
+    /// <summary>每日推荐歌单（/api/v3/discovery/recommend/resource；需登录，匿名返回空）</summary>
+    public async Task<List<OnlinePlaylist>> GetRecommendPlaylistsAsync()
     {
-        if (string.IsNullOrWhiteSpace(songId)) return null;
-
-        // 方案1：免登录外链（302 到 CDN）
         try
         {
-            var outer = $"https://music.163.com/song/media/outer/url?id={songId}.mp3";
-            using var resp = await _http.GetAsync(outer, HttpCompletionOption.ResponseHeadersRead);
-            if (resp.StatusCode is System.Net.HttpStatusCode.OK or System.Net.HttpStatusCode.PartialContent)
-                return ToHttps(resp.RequestMessage?.RequestUri?.ToString() ?? outer);
-        }
-        catch { }
-
-        // 方案2：enhance/player/url + 静态 cookie（免登录接口不带 cookie 会风控空 url）
-        try
-        {
-            var req = Build(HttpMethod.Get, $"https://music.163.com/api/song/enhance/player/url?id={songId}&ids=[{songId}]&br=320000");
-            req.Headers.TryAddWithoutValidation("Cookie", "os=pc; appver=8.9.70");
-            using var resp = await _http.SendAsync(req);
-            var json = await resp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            using var doc = await GetJsonAsync("https://music.163.com/api/v3/discovery/recommend/resource");
+            if (doc == null || !doc.RootElement.TryGetProperty("recommend", out var rec) || rec.ValueKind != JsonValueKind.Array)
+                return new List<OnlinePlaylist>();
+            var list = new List<OnlinePlaylist>();
+            foreach (var r in rec.EnumerateArray())
             {
-                foreach (var item in data.EnumerateArray())
+                var pl = ParsePlaylist(r, coverField: "picUrl");
+                if (!string.IsNullOrWhiteSpace(pl.Id)) list.Add(pl);
+            }
+            return list;
+        }
+        catch { return new List<OnlinePlaylist>(); }
+    }
+
+    // ════════════════ 登录增强：我的歌单 / 红心 ════════════════
+
+    /// <summary>
+    /// 我的歌单（/api/user/playlist；含"我喜欢的音乐"与收藏歌单，需登录）。
+    /// Description 标注「创建/收藏」来源，UI 直接展示。
+    /// </summary>
+    public async Task<List<OnlinePlaylist>> GetUserPlaylistsAsync()
+    {
+        var uid = await GetUserIdAsync();
+        if (uid == null) return new List<OnlinePlaylist>();
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/user/playlist?uid={uid}&offset=0&limit=200");
+            if (doc == null || !doc.RootElement.TryGetProperty("playlist", out var pls) || pls.ValueKind != JsonValueKind.Array)
+                return new List<OnlinePlaylist>();
+            var list = new List<OnlinePlaylist>();
+            bool first = true;
+            foreach (var pl in pls.EnumerateArray())
+            {
+                var item = ParsePlaylist(pl);
+                if (string.IsNullOrWhiteSpace(item.Id)) continue;
+                bool subscribed = pl.TryGetProperty("subscribed", out var sb) && sb.ValueKind == JsonValueKind.True;
+                item.Description = first ? "❤️ 我喜欢的音乐"
+                    : subscribed ? "收藏的歌单" : "创建的歌单";
+                if (first) _likedPlaylistId = item.Id; // 首个固定为「我喜欢的音乐」
+                first = false;
+                list.Add(item);
+            }
+            return list;
+        }
+        catch { return new List<OnlinePlaylist>(); }
+    }
+
+    /// <summary>「我喜欢的音乐」歌单 id（懒加载；未登录返回 null）</summary>
+    private async Task<string?> GetLikedPlaylistIdAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(_likedPlaylistId)) return _likedPlaylistId;
+        var list = await GetUserPlaylistsAsync();
+        return list.Count > 0 ? _likedPlaylistId : null;
+    }
+
+    /// <summary>已红心歌曲 id 集合（用于列表 ❤ 状态展示；未登录返回空集合）</summary>
+    public async Task<HashSet<string>> GetLikedSongIdsAsync()
+    {
+        if (_likedSongIds != null) return _likedSongIds;
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        var pid = await GetLikedPlaylistIdAsync();
+        if (pid == null) { _likedSongIds = set; return set; }
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/v6/playlist/detail?id={pid}&n=1000&s=0");
+            if (doc != null && doc.RootElement.TryGetProperty("playlist", out var pl) &&
+                pl.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var t in tracks.EnumerateArray())
                 {
-                    if (item.TryGetProperty("url", out var u))
-                    {
-                        var playUrl = u.GetString();
-                        if (!string.IsNullOrWhiteSpace(playUrl)) return ToHttps(playUrl);
-                    }
+                    if (t.TryGetProperty("id", out var idEl) && idEl.ValueKind != JsonValueKind.Null)
+                        set.Add(idEl.GetInt64().ToString());
                 }
             }
         }
         catch { }
+        _likedSongIds = set;
+        return set;
+    }
 
-        // 方案3：公共 NeteaseCloudMusicApi 实例兜底
+    /// <summary>红心/取消红心普通歌曲（/api/playlist/manipulate/tracks 增删「我喜欢的音乐」；需登录）</summary>
+    public async Task<bool> LikeSongAsync(string songId, bool like)
+    {
+        if (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(_cookie)) return false;
+        var pid = await GetLikedPlaylistIdAsync();
+        if (pid == null) return false;
+        try
+        {
+            var body = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["op"] = like ? "add" : "del",
+                ["trackId"] = songId,
+                ["pid"] = pid,
+                ["trackIds"] = $"[{songId}]",
+                ["imme"] = "true",
+            });
+            var req = Build(HttpMethod.Post, "https://music.163.com/api/playlist/manipulate/tracks");
+            req.Content = body;
+            using var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var ok = doc.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 200;
+            if (ok)
+            {
+                var set = await GetLikedSongIdsAsync();
+                if (like) set.Add(songId); else set.Remove(songId);
+            }
+            return ok;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>听歌打卡（/api/feedback/weblog；提升推荐精度，静默失败，需登录）</summary>
+    public async Task ScrobbleAsync(string songId, long durationMs)
+    {
+        if (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(_cookie)) return;
+        try
+        {
+            var seconds = Math.Max(1, durationMs / 1000);
+            var logs = $"[{{\"action\":\"play\",\"json\":{{\"download\":0,\"end\":\"playend\",\"id\":\"{songId}\"," +
+                       $"\"source\":\"list\",\"sourceId\":\"0\",\"time\":\"{seconds}\",\"type\":\"song\",\"wifi\":0}}}}]";
+            var body = new FormUrlEncodedContent(new Dictionary<string, string> { ["logs"] = logs });
+            var req = Build(HttpMethod.Post, "https://music.163.com/api/feedback/weblog");
+            req.Content = body;
+            using var resp = await _http.SendAsync(req);
+            await resp.Content.ReadAsStringAsync(); // 忽略结果
+        }
+        catch { }
+    }
+
+    // ════════════════ 播放直链 / 歌词 ════════════════
+
+    /// <summary>
+    /// 播放直链（带音质 + 20 分钟缓存 + 三级兜底）。
+    /// quality：0=标准 128k，1=高品 320k，2=无损 FLAC（需登录，匿名自动降级 320k）。
+    /// </summary>
+    public async Task<string?> GetPlayUrlAsync(string songId, int quality = 1)
+    {
+        if (string.IsNullOrWhiteSpace(songId)) return null;
+        quality = Math.Clamp(quality, 0, 2);
+
+        // 缓存命中
+        var cacheKey = $"{songId}:{quality}";
+        lock (_urlCacheLock)
+        {
+            if (_urlCache.TryGetValue(cacheKey, out var hit))
+            {
+                if (hit.ExpireAt > DateTime.UtcNow) return hit.Url;
+                _urlCache.Remove(cacheKey);
+            }
+        }
+
+        string? url = await ResolvePlayUrlAsync(songId, quality);
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            lock (_urlCacheLock)
+            {
+                _urlCache[cacheKey] = (url, DateTime.UtcNow + UrlCacheTtl);
+                // 简单防爆：缓存条目过多时整体清空（TTL 20 分钟，通常远达不到）
+                if (_urlCache.Count > 2000) _urlCache.Clear();
+            }
+        }
+        return url;
+    }
+
+    private static int QualityToBr(int quality) => quality switch
+    {
+        0 => 128000,
+        2 => 999000,
+        _ => 320000,
+    };
+
+    /// <summary>三级兜底取链（enhance 按音质 → outer 免登录外链 → 公共 API 实例）</summary>
+    private async Task<string?> ResolvePlayUrlAsync(string songId, int quality)
+    {
+        // 无损需登录：匿名请求 br=999000 会被风控，直接降为 320k 流程
+        int br = QualityToBr(quality == 2 && !HasCookie ? 1 : quality);
+
+        // 方案1：enhance/player/url（按目标音质请求；静态 cookie 防风控，用户 cookie 提升完整度）
+        var enhanceUrl = await GetEnhanceUrlAsync(songId, br);
+        if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
+
+        // 方案2：免登录外链（302 到 CDN；标准/高品档可用）
+        if (br <= 320000)
+        {
+            try
+            {
+                var outer = $"https://music.163.com/song/media/outer/url?id={songId}.mp3";
+                using var resp = await _http.GetAsync(outer, HttpCompletionOption.ResponseHeadersRead);
+                if (resp.StatusCode is System.Net.HttpStatusCode.OK or System.Net.HttpStatusCode.PartialContent)
+                    return ToHttps(resp.RequestMessage?.RequestUri?.ToString() ?? outer);
+            }
+            catch { }
+        }
+
+        // 方案3：无损失败 → 降档 320k 再试 enhance
+        if (br == 999000)
+        {
+            enhanceUrl = await GetEnhanceUrlAsync(songId, 320000);
+            if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
+        }
+
+        // 方案4：公共 NeteaseCloudMusicApi 实例兜底
         foreach (var api in PublicApiBases)
         {
             try
@@ -403,6 +737,34 @@ public class NeteaseOpenApiClient
             }
             catch { }
         }
+        return null;
+    }
+
+    /// <summary>enhance/player/url 按码率取链（静态 cookie 免风控）</summary>
+    private async Task<string?> GetEnhanceUrlAsync(string songId, int br)
+    {
+        try
+        {
+            var req = Build(HttpMethod.Get, $"https://music.163.com/api/song/enhance/player/url?id={songId}&ids=[{songId}]&br={br}");
+            // 用户 Cookie 优先（提升 VIP/无损完整度），未登录用静态 cookie 防风控
+            if (string.IsNullOrWhiteSpace(_cookie))
+                req.Headers.TryAddWithoutValidation("Cookie", "os=pc; appver=8.9.70");
+            using var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in data.EnumerateArray())
+                {
+                    if (item.TryGetProperty("url", out var u))
+                    {
+                        var playUrl = u.GetString();
+                        if (!string.IsNullOrWhiteSpace(playUrl)) return ToHttps(playUrl);
+                    }
+                }
+            }
+        }
+        catch { }
         return null;
     }
 
@@ -454,7 +816,25 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>解析标准歌曲 JSON（兼容 ar/artists、al/album、dt/duration 字段变体）</summary>
+    /// <summary>解析歌单 JSON（兼容 coverImgUrl/picUrl 两种封面字段）</summary>
+    private static OnlinePlaylist ParsePlaylist(JsonElement pl, string coverField = "coverImgUrl")
+    {
+        string? cover = null;
+        if (pl.TryGetProperty(coverField, out var c1)) cover = c1.GetString();
+        if (cover == null && pl.TryGetProperty("coverImgUrl", out var c2)) cover = c2.GetString();
+        if (cover == null && pl.TryGetProperty("picUrl", out var c3)) cover = c3.GetString();
+        return new OnlinePlaylist
+        {
+            Id = pl.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
+            Platform = "netease",
+            Name = pl.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+            CoverUrl = CoverWithSize(ToHttps(cover), 500),
+            Description = pl.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null,
+            SongCount = pl.TryGetProperty("trackCount", out var tc) && tc.TryGetInt32(out var tcv) ? tcv : 0,
+        };
+    }
+
+    /// <summary>解析标准歌曲 JSON（兼容 ar/artists、al/album、dt/duration 字段变体 + privilege 权益信息）</summary>
     private OnlineSong? ParseSong(JsonElement s)
     {
         try
@@ -484,7 +864,17 @@ public class NeteaseOpenApiClient
             if (dur == 0 && s.TryGetProperty("duration", out var du)) dur = du.GetInt64();
             if (dur == 0 && s.TryGetProperty("durationMs", out var dm)) dur = dm.GetInt64();
 
-            return new OnlineSong
+            // 权益信息：fee=1 VIP / fee=4 数字专辑需购买；st=-1 下架/无版权
+            bool isVip = false, blocked = false;
+            if (s.TryGetProperty("privilege", out var pv) && pv.ValueKind == JsonValueKind.Object)
+            {
+                if (pv.TryGetProperty("fee", out var fee) && fee.TryGetInt32(out var feeV))
+                    isVip = feeV is 1 or 4;
+                if (pv.TryGetProperty("st", out var st) && st.TryGetInt32(out var stV))
+                    blocked = stV == -1;
+            }
+
+            var song = new OnlineSong
             {
                 Id = idEl.GetInt64().ToString(),
                 Platform = "netease",
@@ -493,8 +883,13 @@ public class NeteaseOpenApiClient
                 Artist = string.Join(" / ", artists),
                 Album = album ?? string.Empty,
                 DurationMs = dur,
-                CoverUrl = ToHttps(cover),
+                CoverUrl = CoverWithSize(ToHttps(cover), 300),
             };
+            song.Internal ??= new Dictionary<string, object>();
+            song.Internal["Vip"] = isVip;
+            song.Internal["Blocked"] = blocked;
+            song.Internal["Liked"] = false;
+            return song;
         }
         catch { return null; }
     }
@@ -516,5 +911,13 @@ public class NeteaseOpenApiClient
         return url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
             ? "https://" + url.Substring(7)
             : url;
+    }
+
+    /// <summary>网易云图片服务按尺寸裁剪（?param=WxH），节省流量与内存</summary>
+    private static string? CoverWithSize(string? url, int size)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return url;
+        if (url.Contains("?param=", StringComparison.Ordinal)) return url;
+        return $"{url}?param={size}y{size}";
     }
 }
