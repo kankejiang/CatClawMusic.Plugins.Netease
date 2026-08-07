@@ -8,7 +8,9 @@ namespace CatClawMusic.Plugins.Netease;
 /// <summary>
 /// 网易云在线音乐页面（C# 代码构建 UI，避免跨程序集 XAML 编译问题）。
 /// <para>
-/// 这是原客户端 OnlineMusicPage 的插件化版本，UI 用 C# 代码构建。
+/// 顶部：返回 + 标题 + 音质切换 + 账号；搜索框 + 搜索类型（歌曲/歌单/歌手）；
+/// 功能入口（私人漫游/每日推荐/排行榜/我的歌单/推荐歌单）；分类 chips；
+/// 歌单网格（分页加载）/歌手列表/歌曲列表三态切换；底部轻提示条。
 /// 通过 DynamicResource 访问宿主应用的全局资源（颜色、样式）。
 /// </para>
 /// </summary>
@@ -21,6 +23,7 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly CollectionView _playlistsView;
     private readonly GridItemsLayout _playlistsLayout;
     private readonly CollectionView _songsView;
+    private readonly CollectionView _artistsView;
     private readonly ActivityIndicator _loadingIndicator;
 
     public NeteaseOnlineMusicPage(NeteaseOnlineMusicViewModel vm, IServiceProvider services)
@@ -34,7 +37,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             ? (Color)bg
             : Color.FromArgb("#0B0D20");
 
-        // ── 顶部：返回 + 标题 + 账号 ──
+        // ── 顶部：返回 + 标题 + 音质 + 账号 ──
         var backButton = CreateBackButton();
         var titleLabel = new Label
         {
@@ -45,6 +48,21 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         titleLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
 
+        var qualityButton = new Border
+        {
+            Padding = new Thickness(10, 7),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 16 },
+        };
+        qualityButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var qualityLabel = new Label { FontSize = 12, FontFamily = "OpenSansSemibold", VerticalOptions = LayoutOptions.Center };
+        qualityLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        qualityLabel.SetBinding(Label.TextProperty, nameof(NeteaseOnlineMusicViewModel.QualityText));
+        qualityButton.Content = qualityLabel;
+        var qualityTap = new TapGestureRecognizer();
+        qualityTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.CycleQualityCommand));
+        qualityButton.GestureRecognizers.Add(qualityTap);
+
         var accountButton = new Border
         {
             Padding = new Thickness(12, 7),
@@ -52,7 +70,6 @@ public class NeteaseOnlineMusicPage : ContentPage
             StrokeShape = new RoundRectangle { CornerRadius = 16 },
         };
         accountButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-        accountButton.SetBinding(Border.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.SupportsLogin));
         var accountLabel = new Label { FontSize = 12, FontFamily = "OpenSansSemibold", VerticalOptions = LayoutOptions.Center };
         accountLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
         accountLabel.SetBinding(Label.TextProperty, nameof(NeteaseOnlineMusicViewModel.AccountButtonText));
@@ -68,16 +85,18 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Width = GridLength.Auto },
                 new() { Width = GridLength.Star },
                 new() { Width = GridLength.Auto },
+                new() { Width = GridLength.Auto },
             },
-            ColumnSpacing = 12,
+            ColumnSpacing = 8,
             Padding = new Thickness(16, 12, 16, 8),
-            Children = { backButton, titleLabel, accountButton },
+            Children = { backButton, titleLabel, qualityButton, accountButton },
         };
         Grid.SetColumn(titleLabel, 1);
-        Grid.SetColumn(accountButton, 2);
+        Grid.SetColumn(qualityButton, 2);
+        Grid.SetColumn(accountButton, 3);
 
         // ── 搜索框 ──
-        var searchEntry = new Entry { Placeholder = "搜索歌曲..." };
+        var searchEntry = new Entry { Placeholder = "搜索歌曲 / 歌单 / 歌手..." };
         searchEntry.SetDynamicResource(Entry.TextColorProperty, "TextPrimaryColor");
         searchEntry.SetBinding(Entry.TextProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.SearchQuery), mode: BindingMode.TwoWay));
         searchEntry.ReturnType = ReturnType.Search;
@@ -89,73 +108,69 @@ public class NeteaseOnlineMusicPage : ContentPage
             Padding = new Thickness(14, 8),
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 14 },
-            Margin = new Thickness(16, 0, 16, 8),
+            Margin = new Thickness(16, 0, 16, 4),
         };
         searchBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
 
-        // ── 私人漫游 / 每日推荐 / 排行榜 入口 ──
-        var fmCard = CreateEntryCard("🎧 私人漫游", "随机推荐", "#667eea", "#764ba2");
+        // ── 搜索类型 chips（歌曲/歌单/歌手）──
+        var searchModesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 0, 16, 6) };
+        BindableLayout.SetItemsSource(searchModesLayout, _vm.SearchModes);
+        BindableLayout.SetItemTemplate(searchModesLayout,
+            NeteaseUiKit.CreateCategoryChipTemplate(_vm, nameof(NeteaseOnlineMusicViewModel.SelectSearchModeCommand), nameof(CategoryChipItem.Name)));
+        var searchModesScroll = new ScrollView
+        {
+            Orientation = ScrollOrientation.Horizontal,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
+            HeightRequest = 36,
+            Content = searchModesLayout,
+        };
+
+        // ── 功能入口（登录后可见：我的歌单 / 推荐歌单）──
+        var fmCard = NeteaseUiKit.CreateEntryCard("🎧 私人漫游", "随机推荐", "#667eea", "#764ba2");
         var fmTap = new TapGestureRecognizer();
-        fmTap.Tapped += async (_, _) => await _vm.LoadPrivateFmAsync();
+        fmTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadPrivateFmCommand));
         fmCard.GestureRecognizers.Add(fmTap);
 
-        var dailyCard = CreateEntryCard("📅 每日推荐", "今天想听什么", "#f7971e", "#ffd200");
+        var dailyCard = NeteaseUiKit.CreateEntryCard("📅 每日推荐", "今天想听什么", "#f7971e", "#ffd200");
         var dailyTap = new TapGestureRecognizer();
-        dailyTap.Tapped += async (_, _) => await _vm.LoadDailyRecommendAsync();
+        dailyTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadDailyRecommendCommand));
         dailyCard.GestureRecognizers.Add(dailyTap);
 
-        var toplistCard = CreateEntryCard("🔥 排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
+        var toplistCard = NeteaseUiKit.CreateEntryCard("🔥 排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
         var toplistTap = new TapGestureRecognizer();
-        toplistTap.Tapped += async (_, _) => await _vm.LoadToplistsAsync();
+        toplistTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadToplistsCommand));
         toplistCard.GestureRecognizers.Add(toplistTap);
 
-        var entryRow = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Star }, new() { Width = GridLength.Star } },
-            ColumnSpacing = 10,
-            Padding = new Thickness(16, 2, 16, 6),
-            Children = { fmCard, dailyCard },
-        };
-        Grid.SetColumn(dailyCard, 1);
+        var myCard = NeteaseUiKit.CreateEntryCard("💛 我的歌单", "创建与收藏", "#11998e", "#38ef7d");
+        myCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
+        var myTap = new TapGestureRecognizer();
+        myTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadMyPlaylistsCommand));
+        myCard.GestureRecognizers.Add(myTap);
 
-        // ── 分类 chips（水平滚动）──
-        var categoriesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 4, 16, 6) };
-        categoriesLayout.SetBinding(HorizontalStackLayout.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
-        // 用 BindableLayout 绑定分类列表
-        BindableLayout.SetItemsSource(categoriesLayout, _vm.Categories);
-        BindableLayout.SetItemTemplate(categoriesLayout, new DataTemplate(() =>
+        var recommendCard = NeteaseUiKit.CreateEntryCard("✨ 推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
+        recommendCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
+        var recommendTap = new TapGestureRecognizer();
+        recommendTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadRecommendPlaylistsCommand));
+        recommendCard.GestureRecognizers.Add(recommendTap);
+
+        var entryRow1 = CreateEntryRow(fmCard, dailyCard);
+        var entryRow2 = CreateEntryRow(toplistCard, myCard);
+        var entryRow3 = CreateEntryRow(recommendCard, null);
+        entryRow3.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
+
+        var entryContainer = new VerticalStackLayout
         {
-            var chip = new Border
-            {
-                Padding = new Thickness(10, 5),
-                StrokeThickness = 0,
-                StrokeShape = new RoundRectangle { CornerRadius = 12 },
-            };
-            chip.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-            var chipLabel = new Label { FontSize = 11, VerticalOptions = LayoutOptions.Center };
-            chipLabel.SetDynamicResource(Label.TextColorProperty, "TextSecondaryColor");
-            chipLabel.SetBinding(Label.TextProperty, nameof(CategoryChipItem.Name));
-            chip.Content = chipLabel;
-            // 选中态样式
-            chip.Triggers.Add(new DataTrigger(typeof(Border))
-            {
-                Binding = new Binding(nameof(CategoryChipItem.IsSelected)),
-                Value = true,
-                Setters = { new Setter { Property = Border.BackgroundColorProperty, Value = Application.Current?.Resources["PrimaryColor"] } },
-            });
-            chipLabel.Triggers.Add(new DataTrigger(typeof(Label))
-            {
-                Binding = new Binding(nameof(CategoryChipItem.IsSelected)),
-                Value = true,
-                Setters = { new Setter { Property = Label.TextColorProperty, Value = Colors.White } },
-            });
-            var tap = new TapGestureRecognizer();
-            tap.SetBinding(TapGestureRecognizer.CommandProperty, new Binding(
-                nameof(NeteaseOnlineMusicViewModel.SelectCategoryCommand), source: _vm));
-            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding(nameof(CategoryChipItem.Name)));
-            chip.GestureRecognizers.Add(tap);
-            return chip;
-        }));
+            Spacing = 10,
+            Padding = new Thickness(16, 2, 16, 6),
+            Children = { entryRow1, entryRow2, entryRow3 },
+        };
+
+        // ── 分类 chips（水平滚动，仅歌单广场可见）──
+        var categoriesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 4, 16, 6) };
+        categoriesLayout.SetBinding(HorizontalStackLayout.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
+        BindableLayout.SetItemsSource(categoriesLayout, _vm.Categories);
+        BindableLayout.SetItemTemplate(categoriesLayout,
+            NeteaseUiKit.CreateCategoryChipTemplate(_vm, nameof(NeteaseOnlineMusicViewModel.SelectCategoryCommand), nameof(CategoryChipItem.Name)));
 
         var categoriesScroll = new ScrollView
         {
@@ -164,9 +179,9 @@ public class NeteaseOnlineMusicPage : ContentPage
             HeightRequest = 42,
             Content = categoriesLayout,
         };
-        categoriesScroll.SetBinding(ScrollView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
+        categoriesScroll.SetBinding(ScrollView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
 
-        // ── 歌单网格 ──
+        // ── 歌单网格（分页加载）──
         _playlistsLayout = new GridItemsLayout(2, ItemsLayoutOrientation.Vertical)
         {
             HorizontalItemSpacing = 10,
@@ -177,11 +192,24 @@ public class NeteaseOnlineMusicPage : ContentPage
             ItemsLayout = _playlistsLayout,
             SelectionMode = SelectionMode.Single,
             Margin = new Thickness(16, 6, 16, 0),
+            RemainingItemsThreshold = 6,
         };
+        _playlistsView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         _playlistsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
         _playlistsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Playlists));
-        _playlistsView.ItemTemplate = new DataTemplate(() => CreatePlaylistItemTemplate());
+        _playlistsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate());
         _playlistsView.SelectionChanged += OnPlaylistSelected;
+
+        // ── 歌手列表（搜索歌手模式）──
+        _artistsView = new CollectionView
+        {
+            SelectionMode = SelectionMode.Single,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        _artistsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
+        _artistsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Artists));
+        _artistsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateArtistItemTemplate());
+        _artistsView.SelectionChanged += OnArtistSelected;
 
         // ── 歌曲列表模式 ──
         var songsBackButton = new Border
@@ -189,7 +217,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             Padding = new Thickness(10, 5),
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 12 },
-            Content = new Label { Text = "‹ 歌单", FontSize = 12 },
+            Content = new Label { Text = "‹ 返回", FontSize = 12 },
         };
         songsBackButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var songsBackLabel = (Label)songsBackButton.Content!;
@@ -245,10 +273,20 @@ public class NeteaseOnlineMusicPage : ContentPage
         {
             SelectionMode = SelectionMode.Single,
             Margin = new Thickness(0, 6, 0, 0),
+            RemainingItemsThreshold = 8,
         };
+        _songsView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         _songsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
         _songsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
-        _songsView.ItemTemplate = new DataTemplate(() => CreateSongItemTemplate());
+        _songsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
+        {
+            HeartCommand = _vm.ToggleLikeCommand,
+            HeartVisibleSource = _vm,
+            HeartVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsLoggedIn),
+            TrashCommand = _vm.TrashFmSongCommand,
+            TrashVisibleSource = _vm,
+            TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
+        }));
         _songsView.SelectionChanged += OnSongSelected;
 
         // ── 加载指示器 ──
@@ -263,25 +301,75 @@ public class NeteaseOnlineMusicPage : ContentPage
         _loadingIndicator.SetBinding(ActivityIndicator.IsRunningProperty, nameof(NeteaseOnlineMusicViewModel.IsLoading));
         _loadingIndicator.SetBinding(ActivityIndicator.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoading));
 
+        // ── 轻提示条（播放失败/操作反馈）──
+        var tipLabel = new Label
+        {
+            FontSize = 12,
+            TextColor = Colors.White,
+            HorizontalTextAlignment = TextAlignment.Center,
+            VerticalTextAlignment = TextAlignment.Center,
+            MaxLines = 2,
+            Padding = new Thickness(14, 8),
+        };
+        tipLabel.SetBinding(Label.TextProperty, nameof(NeteaseOnlineMusicViewModel.TipMessage));
+        var tipBorder = new Border
+        {
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            BackgroundColor = Color.FromArgb("#CC000000"),
+            Margin = new Thickness(24, 0, 24, 12),
+            VerticalOptions = LayoutOptions.End,
+            HorizontalOptions = LayoutOptions.Center,
+            Content = tipLabel,
+        };
+        tipBorder.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.HasTip));
+
         // ── 组装页面 ──
         var contentGrid = new Grid
         {
-            RowDefinitions = new RowDefinitionCollection { new() { Height = GridLength.Auto }, new() { Height = GridLength.Auto }, new() { Height = GridLength.Auto }, new() { Height = GridLength.Auto }, new() { Height = GridLength.Star } },
-            Children = { headerGrid, searchBorder, entryRow, categoriesScroll, _playlistsView, songsHeader, _songsView, _loadingIndicator },
+            RowDefinitions = new RowDefinitionCollection
+            {
+                new() { Height = GridLength.Auto }, // header
+                new() { Height = GridLength.Auto }, // search
+                new() { Height = GridLength.Auto }, // search modes
+                new() { Height = GridLength.Auto }, // entry cards
+                new() { Height = GridLength.Auto }, // categories
+                new() { Height = GridLength.Star }, // content
+            },
+            Children = { headerGrid, searchBorder, searchModesScroll, entryContainer, categoriesScroll, _playlistsView, _artistsView, songsHeader, _songsView, _loadingIndicator, tipBorder },
         };
         Grid.SetRow(searchBorder, 1);
-        Grid.SetRow(entryRow, 2);
-        Grid.SetRow(categoriesScroll, 3);
-        Grid.SetRow(_playlistsView, 4);
-        Grid.SetRow(songsHeader, 4);
-        Grid.SetRow(_songsView, 4);
-        Grid.SetRow(_loadingIndicator, 4);
+        Grid.SetRow(searchModesScroll, 2);
+        Grid.SetRow(entryContainer, 3);
+        Grid.SetRow(categoriesScroll, 4);
+        Grid.SetRow(_playlistsView, 5);
+        Grid.SetRow(_artistsView, 5);
+        Grid.SetRow(songsHeader, 5);
+        Grid.SetRow(_songsView, 5);
+        Grid.SetRow(_loadingIndicator, 5);
+        Grid.SetRow(tipBorder, 5);
 
-        // 网格中的歌曲 header 和歌曲列表叠加在歌单列表之上（通过 IsVisible 互斥）
         Content = contentGrid;
 
         // 页面尺寸变化时调整歌单列数
         SizeChanged += (_, _) => AdjustPlaylistSpan();
+    }
+
+    /// <summary>两列入口行（第二个可为 null = 半行）</summary>
+    private static Grid CreateEntryRow(Border left, Border? right)
+    {
+        var row = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Star }, new() { Width = GridLength.Star } },
+            ColumnSpacing = 10,
+            Children = { left },
+        };
+        if (right != null)
+        {
+            row.Children.Add(right);
+            Grid.SetColumn(right, 1);
+        }
+        return row;
     }
 
     protected override async void OnAppearing()
@@ -335,9 +423,21 @@ public class NeteaseOnlineMusicPage : ContentPage
         await _vm.OpenPlaylistAsync(playlist);
     }
 
+    private async void OnArtistSelected(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is CollectionView cv) cv.SelectedItem = null;
+        if (e.CurrentSelection.FirstOrDefault() is not NeteaseArtist artist) return;
+        try
+        {
+            await Shell.Current.Navigation.PushAsync(new NeteaseArtistPage(artist, _vm.Plugin, _services));
+        }
+        catch { }
+    }
+
     private async void OnSongSelected(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is CollectionView cv) cv.SelectedItem = null;
+        if (_vm.ConsumeSuppressSelection()) return;
         if (e.CurrentSelection.FirstOrDefault() is not OnlineSong song) return;
         await _vm.PlaySongAsync(song);
     }
@@ -360,118 +460,5 @@ public class NeteaseOnlineMusicPage : ContentPage
         tap.Tapped += async (_, _) => { try { await Shell.Current.Navigation.PopAsync(); } catch { } };
         border.GestureRecognizers.Add(tap);
         return border;
-    }
-
-    private static Border CreateEntryCard(string title, string subtitle, string color1, string color2)
-    {
-        var titleLabel = new Label { Text = title, FontSize = 15, FontFamily = "OpenSansSemibold", TextColor = Colors.White };
-        var subtitleLabel = new Label { Text = subtitle, FontSize = 11, TextColor = Color.FromArgb("#CCFFFFFF") };
-        var content = new VerticalStackLayout
-        {
-            Spacing = 3,
-            Children = { titleLabel, subtitleLabel },
-        };
-        return new Border
-        {
-            Padding = new Thickness(14, 12),
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 16 },
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(1, 1),
-                GradientStops =
-                {
-                    new GradientStop { Color = Color.FromArgb(color1), Offset = 0 },
-                    new GradientStop { Color = Color.FromArgb(color2), Offset = 1 },
-                },
-            },
-            Content = content,
-        };
-    }
-
-    private static View CreatePlaylistItemTemplate()
-    {
-        var coverBorder = new Border
-        {
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 12 },
-            HeightRequest = 150,
-        };
-        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-        var coverImage = new Image { Aspect = Aspect.AspectFill, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlinePlaylist.CoverUrl)) { TargetNullValue = "ic_music_note" });
-        coverBorder.Content = coverImage;
-
-        var nameLabel = new Label
-        {
-            FontSize = 12,
-            FontFamily = "OpenSansSemibold",
-            MaxLines = 2,
-            LineBreakMode = LineBreakMode.TailTruncation,
-            Padding = new Thickness(6, 0, 6, 6),
-        };
-        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
-        nameLabel.SetBinding(Label.TextProperty, nameof(OnlinePlaylist.Name));
-
-        var countLabel = new Label
-        {
-            FontSize = 10,
-            Padding = new Thickness(6, 0, 6, 6),
-        };
-        countLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
-        countLabel.SetBinding(Label.TextProperty, new Binding(nameof(OnlinePlaylist.SongCount), stringFormat: "{0} 首"));
-
-        var card = new Border
-        {
-            Padding = new Thickness(0),
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 14 },
-        };
-        card.SetDynamicResource(Border.BackgroundColorProperty, "CardBackgroundColor");
-        card.Content = new VerticalStackLayout
-        {
-            Spacing = 6,
-            Children = { coverBorder, nameLabel, countLabel },
-        };
-        return card;
-    }
-
-    private static View CreateSongItemTemplate()
-    {
-        var coverBorder = new Border
-        {
-            WidthRequest = 40,
-            HeightRequest = 40,
-            StrokeShape = new RoundRectangle { CornerRadius = 8 },
-            StrokeThickness = 0,
-        };
-        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-        var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 40, HeightRequest = 40 };
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl)) { TargetNullValue = "ic_music_note" });
-        coverBorder.Content = coverImage;
-
-        var titleLabel = new Label { FontSize = 14, FontFamily = "OpenSansSemibold", MaxLines = 1 };
-        titleLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
-        titleLabel.SetBinding(Label.TextProperty, nameof(OnlineSong.Title));
-
-        var artistLabel = new Label { FontSize = 11, MaxLines = 1 };
-        artistLabel.SetDynamicResource(Label.TextColorProperty, "TextSecondaryColor");
-        artistLabel.SetBinding(Label.TextProperty, nameof(OnlineSong.Artist));
-
-        var textLayout = new VerticalStackLayout
-        {
-            Spacing = 2,
-            VerticalOptions = LayoutOptions.Center,
-            Children = { titleLabel, artistLabel },
-        };
-
-        return new Grid
-        {
-            Padding = new Thickness(14, 8),
-            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Auto }, new() { Width = GridLength.Star } },
-            ColumnSpacing = 12,
-            Children = { coverBorder, textLayout },
-        };
     }
 }
