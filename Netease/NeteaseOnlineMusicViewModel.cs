@@ -51,8 +51,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     private bool _fmAppending;
     /// <summary>进入 FM 前的播放模式（退出 FM 时恢复）</summary>
     private PlayMode? _fmSavedPlayMode;
-    private const int FmBatchSize = 8;       // 每次补充拉取的数量
-    private const int FmBufferThreshold = 2; // 队列中剩余 FM 歌曲 ≤ 此值时开始补充
+    private const int FmBatchSize = 3;       // 每次补充拉取的数量（对齐官方：3 首 3 首拉）
+    private const int FmBufferThreshold = 0; // 队列中剩余 FM 歌曲 ≤ 此值时开始补充（官方：播到本批最后一首时拉下一批）
 
     /// <summary>FM 缓冲定时兜底：宿主若不触发 PlaybackCompleted（Android 旧 APK 等），每 20 秒检查一次队列剩余并补货；与宿主事件路径并存（EnsureFmBufferAsync 内 _fmAppending 防重入）</summary>
     private IDispatcherTimer? _fmBufferTimer;
@@ -483,7 +483,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Songs.Clear();
         try
         {
-            var songs = await _plugin.GetPrivateFmAsync(15);
+            var songs = await _plugin.GetPrivateFmAsync(3);  // 官方节奏：初拉 3 首，播到本批最后一首时再拉 3 首
             FillSongs(songs, markAsFm: true);
             SongsStatus = Songs.Count == 0 ? "私人漫游暂无歌曲，稍后再试" : "";
         }
