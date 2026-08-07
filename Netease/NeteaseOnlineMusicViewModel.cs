@@ -490,10 +490,13 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         {
             IsLoading = false;
         }
-        IsFmMode = Songs.Count > 0; // 进入私人漫游电台模式
-        ShowPlaylists = false;
-        ShowArtists = false;
-        ShowSongs = true;
+        IsFmMode = Songs.Count > 0; // 私人漫游电台模式
+        // 私人漫游 = 电台按钮：加载后直接开播第一首（不进歌曲列表视图），
+        // 播放中播完自动续拉新歌（PlayFmSongAsync 的无限电台逻辑）；界面保持入口卡视图，播放条显示当前歌
+        if (IsFmMode && Songs.Count > 0)
+        {
+            await PlayFmSongAsync(Songs[0]);
+        }
     }
 
     [RelayCommand]
