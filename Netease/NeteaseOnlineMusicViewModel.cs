@@ -232,6 +232,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         _audioPlayer = audioPlayer;
         Songs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPlaylistSongs));
         _audioPlayer.PlaybackCompleted += OnAudioPlaybackCompleted;
+        _audioPlayer.PlaybackStateChanged += OnPlaybackStateChanged;
         _qualityLevel = _plugin.QualityLevel;
     }
 
@@ -832,6 +833,17 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     }
 
     // ── 播放完成事件：打卡 + FM 缓冲补充 ──
+
+    /// <summary>
+    /// 每首歌开始播放（isPlaying=true）时检查 FM 缓冲：若当前是队列最后一首（remaining=0）立即补货。
+    /// 关键：补货必须【提前到最后一首开始播时】发起，而不是播完才拉——
+    /// 否则宿主"播完队尾即停"（PeekNextSong 为 null 就 Stop）会先执行，异步补货晚一步导致队列空、电台中断。
+    /// </summary>
+    private void OnPlaybackStateChanged(object? sender, bool isPlaying)
+    {
+        if (!isPlaying || !IsFmMode) return;
+        MainThread.BeginInvokeOnMainThread(async () => await EnsureFmBufferAsync());
+    }
 
     private void OnAudioPlaybackCompleted(object? sender, EventArgs e)
     {
