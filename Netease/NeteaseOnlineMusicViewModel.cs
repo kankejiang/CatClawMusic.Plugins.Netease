@@ -1009,6 +1009,9 @@ public static class NeteasePlaybackHelper
         RemoteId = $"{os.Platform}:{os.Id}",
         Source = SongSource.Local,
         AllArtists = os.Artist,
+        // 封面：网易云 coverUrl（http）→ 宿主 CoverArtPath。宿主 LoadCoverAsync 检测到 http/https
+        // 会自动下载并缓存到 cover_{Id}.jpg，播放页即可显示封面（此前未赋值导致播放页无封面）。
+        CoverArtPath = os.CoverUrl,
     };
 
     /// <summary>
