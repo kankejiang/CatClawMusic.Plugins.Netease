@@ -511,13 +511,13 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>每日推荐歌单（/api/v3/discovery/recommend/resource；需登录，匿名返回空）</summary>
+    /// <summary>推荐歌单（/api/personalized/playlist；匿名可用，登录后更个性化）。原 recommend/resource 需登录且匿名返回空</summary>
     public async Task<List<OnlinePlaylist>> GetRecommendPlaylistsAsync()
     {
         try
         {
-            using var doc = await GetJsonAsync("https://music.163.com/api/v3/discovery/recommend/resource");
-            if (doc == null || !doc.RootElement.TryGetProperty("recommend", out var rec) || rec.ValueKind != JsonValueKind.Array)
+            using var doc = await GetJsonAsync("https://music.163.com/api/personalized/playlist?limit=30");
+            if (doc == null || !doc.RootElement.TryGetProperty("result", out var rec) || rec.ValueKind != JsonValueKind.Array)
                 return new List<OnlinePlaylist>();
             var list = new List<OnlinePlaylist>();
             foreach (var r in rec.EnumerateArray())
