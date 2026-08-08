@@ -385,12 +385,14 @@ public class NeteaseOnlineMusicPage : ContentPage
         _vm.Detach();
     }
 
-    /// <summary>点击账号按钮：已登录则退出，未登录则跳转 WebView 登录页</summary>
+    /// <summary>点击账号按钮：已登录则二次确认后退出，未登录则跳转 WebView 登录页</summary>
     private async void OnAccountTapped(object? sender, EventArgs e)
     {
         if (_vm.IsLoggedIn)
         {
-            await _vm.LogoutAsync();
+            // 二级确认：防止误触右上角用户名直接退出登录
+            bool ok = await DisplayAlert("退出登录", "确定要退出网易云账号吗？", "退出", "取消");
+            if (ok) await _vm.LogoutAsync();
             return;
         }
         if (!_vm.SupportsLogin || _vm.CurrentLoginInfo == null) return;
