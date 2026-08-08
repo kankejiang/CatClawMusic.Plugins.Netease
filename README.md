@@ -76,9 +76,6 @@ dotnet build -c Release
 > 另引用 `Microsoft.Maui.Controls`（10.0.20，与宿主一致）与
 > `CommunityToolkit.Mvvm`，均不随插件分发（`CopyLocalLockFileAssemblies=false`，由宿主提供）。
 
-## 版本
-
-当前插件版本 **0.3.0**（`NetEaseMusicPlugin.Version`）。
 
 ## 协议
 
