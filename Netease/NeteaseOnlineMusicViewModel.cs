@@ -801,7 +801,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         }
         else
         {
-            ShowTip("操作失败，请稍后重试");
+            // 红心请求失败：最常见原因是登录 Cookie 已过期（MUSIC_U 失效，服务器拒绝操作）
+            ShowTip("操作失败，可能登录已过期，请点击右上角账号重新登录");
         }
     }
 
