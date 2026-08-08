@@ -606,6 +606,9 @@ public class NeteaseOpenApiClient
         {
             var body = new FormUrlEncodedContent(new Dictionary<string, string>
             {
+                // 老接口必须携带 csrf_token（来自 Cookie 的 __csrf），缺失时服务器拒绝操作
+                //（此前缺此参数：播放直链等 GET 接口不受影响，故"能播会员歌但红心失败"）
+                ["csrf_token"] = ExtractCsrfToken(_cookie),
                 ["op"] = like ? "add" : "del",
                 ["trackId"] = songId,
                 ["pid"] = pid,
@@ -626,6 +629,19 @@ public class NeteaseOpenApiClient
             return ok;
         }
         catch { return false; }
+    }
+
+    /// <summary>从 Cookie 字符串提取 csrf_token（__csrf 或 csrf_token 键；缺失返回空串，服务端宽松时也可通过）</summary>
+    private static string ExtractCsrfToken(string? cookie)
+    {
+        if (string.IsNullOrWhiteSpace(cookie)) return "";
+        foreach (var part in cookie.Split(';'))
+        {
+            var kv = part.Trim().Split('=', 2);
+            if (kv.Length == 2 && kv[0].Trim() is "__csrf" or "csrf_token")
+                return kv[1].Trim();
+        }
+        return "";
     }
 
     /// <summary>听歌打卡（/api/feedback/weblog；提升推荐精度，静默失败，需登录）</summary>
