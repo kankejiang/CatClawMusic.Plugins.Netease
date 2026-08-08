@@ -267,7 +267,6 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         Grid.SetColumn(songsTitleLabel, 1);
         Grid.SetColumn(playAllButton, 2);
-        songsHeader.SetBinding(Grid.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
 
         _songsView = new CollectionView
         {
@@ -288,6 +287,8 @@ public class NeteaseOnlineMusicPage : ContentPage
             TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
         }));
         _songsView.SelectionChanged += OnSongSelected;
+        // songsHeader 合并到 _songsView.Header：与 _songsView 同生死，避免 Grid Row 5 多元素重叠渲染（曾导致红条覆盖歌单列表）
+        _songsView.Header = songsHeader;
 
         // ── 加载指示器 ──
         _loadingIndicator = new ActivityIndicator
@@ -336,7 +337,7 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Height = GridLength.Auto }, // categories
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, searchBorder, searchModesScroll, entryContainer, categoriesScroll, _playlistsView, _artistsView, songsHeader, _songsView, _loadingIndicator, tipBorder },
+            Children = { headerGrid, searchBorder, searchModesScroll, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder },
         };
         Grid.SetRow(searchBorder, 1);
         Grid.SetRow(searchModesScroll, 2);
@@ -344,7 +345,6 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(categoriesScroll, 4);
         Grid.SetRow(_playlistsView, 5);
         Grid.SetRow(_artistsView, 5);
-        Grid.SetRow(songsHeader, 5);
         Grid.SetRow(_songsView, 5);
         Grid.SetRow(_loadingIndicator, 5);
         Grid.SetRow(tipBorder, 5);
