@@ -14,6 +14,8 @@
     <!-- 注意：本项目位于 D:\Code\CatClawMusic.Plugins.Netease，CatClawMusic.Core 在其同级
          CatClawMusic\ 目录下，因此相对路径为 ..\CatClawMusic\CatClawMusic.Core -->
     <ProjectReference Include="..\CatClawMusic\CatClawMusic.Core\CatClawMusic.Core.csproj" />
+    <!-- 引用 Data（MusicDatabase）：红心/收藏入库用（宿主 DI 注册的是具体类，插件按具体类解析） -->
+    <ProjectReference Include="..\CatClawMusic\CatClawMusic.Data\CatClawMusic.Data.csproj" />
     <!-- 引用 MAUI Controls：插件用 C# 代码构建 UI（不用 XAML，避免跨程序集编译问题）。
          版本与宿主一致（10.0.20），CopyLocalLockFileAssemblies=false 保证不随插件分发。 -->
     <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />

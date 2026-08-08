@@ -64,7 +64,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
         // VM 插件级单例：私人漫游（FM）电台是全局播放行为，与页面开关无关。
         // 若每次进入都 new VM，页面 OnDisappearing→Detach 会调用 LeaveFmMode 杀死正在播放的电台；
         // 单例化后事件订阅/补货 Timer 常驻，页面生命周期不再影响电台，也避免多实例并发补货。
-        _sharedVm ??= new NeteaseOnlineMusicViewModel(this, queue, audioPlayer);
+        _sharedVm ??= new NeteaseOnlineMusicViewModel(this, queue, audioPlayer, services);
         return new NeteaseOnlineMusicPage(_sharedVm, services);
     }
 

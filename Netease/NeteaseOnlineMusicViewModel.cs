@@ -27,6 +27,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     private readonly NetEaseMusicPlugin _plugin;
     private readonly PlayQueue _queue;
     private readonly IAudioPlayerService _audioPlayer;
+    private readonly IServiceProvider? _services;
 
     /// <summary>插件实例（视图层跳转歌手/专辑页需要）</summary>
     public NetEaseMusicPlugin Plugin => _plugin;
@@ -225,11 +226,12 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     public bool HasPlaylistSongs => Songs.Count > 0;
 
-    public NeteaseOnlineMusicViewModel(NetEaseMusicPlugin plugin, PlayQueue queue, IAudioPlayerService audioPlayer)
+    public NeteaseOnlineMusicViewModel(NetEaseMusicPlugin plugin, PlayQueue queue, IAudioPlayerService audioPlayer, IServiceProvider? services = null)
     {
         _plugin = plugin;
         _queue = queue;
         _audioPlayer = audioPlayer;
+        _services = services;
         Songs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPlaylistSongs));
         _audioPlayer.PlaybackCompleted += OnAudioPlaybackCompleted;
         _audioPlayer.PlaybackStateChanged += OnPlaybackStateChanged;
@@ -794,11 +796,56 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             if (target) _likedIds.Add(song.Id); else _likedIds.Remove(song.Id);
             RefreshSongRow(song);
             ShowTip(target ? "已添加到我喜欢的音乐" : "已取消红心");
+            // 同步到宿主本地数据库（Songs[Cache] + Favorites），宿主收藏列表可见；失败静默不影响红心主流程
+            _ = SyncFavoriteToDatabaseAsync(song, target);
         }
         else
         {
             ShowTip("操作失败，请稍后重试");
         }
+    }
+
+    /// <summary>
+    /// 红心状态同步到宿主本地数据库：红心 → 写入 Songs（Source=Cache，不入本地曲库视图）+ Favorites；
+    /// 取消红心 → 移除 Favorites 记录（Songs 记录保留，Cleanup 不会误删已收藏项）。
+    /// 网易云红心主逻辑在服务器（LikeSongAsync），这里只是本地可查询的镜像。
+    /// </summary>
+    private async Task SyncFavoriteToDatabaseAsync(OnlineSong os, bool liked)
+    {
+        try
+        {
+            if (_services?.GetService(typeof(CatClawMusic.Data.MusicDatabase)) is not CatClawMusic.Data.MusicDatabase db) return;
+            string remoteId = $"{os.Platform}:{os.Id}";
+            // 查重：已收藏集合里找同 RemoteId（防重复插入/取消时定位）
+            var favSongs = await db.GetFavoriteSongsAsync();
+            var existing = favSongs.FirstOrDefault(s => s.RemoteId == remoteId);
+
+            if (liked)
+            {
+                if (existing != null) return; // 已入库
+                string? url = null;
+                try { url = await _plugin.GetPlayUrlAsync(os, QualityLevel); } catch { }
+                var song = new Song
+                {
+                    Title = os.Title,
+                    Artist = os.Artist,
+                    Album = os.Album,
+                    Duration = (int)(os.DurationMs / 1000),
+                    FilePath = url ?? "",
+                    RemoteId = remoteId,
+                    Source = SongSource.Cache,
+                    CoverArtPath = os.CoverUrl,
+                    AllArtists = os.Artist,
+                };
+                await db.InsertSongAsync(song);
+                if (song.Id > 0) await db.SetFavoriteAsync(song.Id, true);
+            }
+            else if (existing != null)
+            {
+                await db.SetFavoriteAsync(existing.Id, false);
+            }
+        }
+        catch { /* 本地镜像失败不影响服务器红心 */ }
     }
 
     /// <summary>替换集合中的实例触发该行重新渲染（OnlineSong 无 INPC，借此刷新红心图标）</summary>
