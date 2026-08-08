@@ -346,7 +346,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public async Task OpenPlaylistAsync(OnlinePlaylist? playlist)
     {
         if (playlist == null) return;
-        LeaveFmMode();
+        // 浏览歌单不退出电台：仅真正播放非 FM 歌曲时才 LeaveFmMode（PlayFromAsync）
         IsLoading = true;
         SongsStatus = "正在加载歌曲...";
         CurrentListTitle = playlist.Name;
@@ -388,7 +388,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadToplistsAsync()
     {
-        LeaveFmMode();
+        // 浏览排行榜不退出电台（同上）
         IsLoading = true;
         PlaylistStatus = "正在加载排行榜...";
         Playlists.Clear();
@@ -419,7 +419,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public async Task LoadMyPlaylistsAsync()
     {
         if (!IsLoggedIn) { ShowTip("登录后可查看我的歌单"); return; }
-        LeaveFmMode();
+        // 浏览我的歌单不退出电台（同上）
         IsLoading = true;
         PlaylistStatus = "正在加载我的歌单...";
         Playlists.Clear();
@@ -448,7 +448,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadRecommendPlaylistsAsync()
     {
-        LeaveFmMode();
+        // 浏览推荐歌单不退出电台（同上）
         IsLoading = true;
         PlaylistStatus = "正在加载推荐歌单...";
         Playlists.Clear();
@@ -509,7 +509,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadDailyRecommendAsync()
     {
-        LeaveFmMode();
+        // 浏览每日推荐不退出电台（同上）
         IsLoading = true;
         SongsStatus = "正在获取每日推荐...";
         CurrentListTitle = "📅 每日推荐";
@@ -553,7 +553,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         var q = SearchQuery?.Trim();
         if (string.IsNullOrWhiteSpace(q)) return;
-        LeaveFmMode();
+        // 搜索不退出电台（仅播放搜索结果时才退）
         _lastQuery = q;
         _searchPage = 1;
         IsLoading = true;
@@ -626,7 +626,12 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     private async Task PlayFromAsync(OnlineSong? startSong)
     {
         if (startSong == null) return;
-        if (IsFmMode)
+        // FM 列表内的歌曲（带 FromFm 标记）切歌 → 继续电台；非 FM 列表的歌（歌单/搜索/排行/每日推荐）→ 退出电台正常播放。
+        // 关键：浏览列表（打开歌单/搜索）不退出电台（LeaveFmMode 只在真正播放非电台歌时触发，
+        // 否则点开歌单看一眼电台就被杀，播放模式变回列表循环）。
+        bool fromFm = startSong.Internal != null
+            && startSong.Internal.TryGetValue("FromFm", out var f) && f is true;
+        if (IsFmMode && fromFm)
         {
             await PlayFmSongAsync(startSong);
             return;
