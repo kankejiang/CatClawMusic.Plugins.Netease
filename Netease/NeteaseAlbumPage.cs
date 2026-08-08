@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CatClawMusic.Core.Models;
+using CatClawMusic.Maui.Helpers;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
 using Microsoft.Maui.Graphics;
@@ -32,15 +33,19 @@ public class NeteaseAlbumPage : ContentPage
             : Color.FromArgb("#0B0D20");
 
         // ── 头部：返回 + 专辑信息 + 播放全部 ──
-        var backButton = new Border
+        // 用宿主 ic_arrow_back.svg 图标 + 半透明深色背景，跨主题可读（之前 "‹" 字符 + SurfaceColor 在深色头区与页面背景融合，按钮不可见）
+        var backButton = new ImageButton
         {
-            Padding = new Thickness(12, 7),
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 14 },
-            Content = new Label { Text = "‹", FontSize = 26, Margin = new Thickness(0, -4, 0, 0), HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center },
+            WidthRequest = 36,
+            HeightRequest = 36,
+            Padding = new Thickness(8),
+            CornerRadius = 18,
+            BackgroundColor = Color.FromArgb("#66000000"),
+            Aspect = AspectFit,
+            Source = ImageSourceHelper.FromNameOriginal("ic_arrow_back"),
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Start,
         };
-        backButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-        ((Label)backButton.Content!).SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
         var backTap = new TapGestureRecognizer();
         backTap.Tapped += async (_, _) => { try { await Shell.Current.Navigation.PopAsync(); } catch { } };
         backButton.GestureRecognizers.Add(backTap);
