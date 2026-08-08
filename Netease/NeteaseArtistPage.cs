@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using CatClawMusic.Core.Models;
-using CatClawMusic.Maui.Helpers;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
 using Microsoft.Maui.Graphics;
@@ -34,18 +33,17 @@ public class NeteaseArtistPage : ContentPage
             : Color.FromArgb("#0B0D20");
 
         // ── 头部：返回 + 歌手信息 ──
-        // 用宿主 ic_arrow_back.svg 图标 + 半透明深色背景，跨主题可读（之前用 "‹" 字符 + SurfaceColor 背景在深色头区与页面背景几乎融合，按钮不可见）
-        var backButton = new ImageButton
+        // 用 Unicode 箭头 "←" + 固定半透明深色背景，跨主题可见（之前 "‹" + SurfaceColor 在深色头区与页面背景融合，按钮不可见。
+        // 不用 ImageSourceHelper 是因为它在宿主 Maui 项目，插件不能引用避免循环依赖。）
+        var backButton = new Border
         {
+            Padding = new Thickness(12, 6),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 18 },
+            BackgroundColor = Color.FromArgb("#66000000"),
             WidthRequest = 36,
             HeightRequest = 36,
-            Padding = new Thickness(8),
-            CornerRadius = 18,
-            BackgroundColor = Color.FromArgb("#66000000"),
-            Aspect = AspectFit,
-            Source = ImageSourceHelper.FromNameOriginal("ic_arrow_back"),
-            VerticalOptions = LayoutOptions.Center,
-            HorizontalOptions = LayoutOptions.Start,
+            Content = new Label { Text = "←", FontSize = 22, TextColor = Colors.White, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Margin = new Thickness(0, -3, 0, 0) },
         };
         var backTap = new TapGestureRecognizer();
         backTap.Tapped += async (_, _) => { try { await Shell.Current.Navigation.PopAsync(); } catch { } };
