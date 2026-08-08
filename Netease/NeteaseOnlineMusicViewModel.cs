@@ -442,11 +442,10 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         ShowPlaylists = true;
     }
 
-    /// <summary>每日推荐歌单（需登录）</summary>
+    /// <summary>推荐歌单（匿名可用，无需登录）</summary>
     [RelayCommand]
     public async Task LoadRecommendPlaylistsAsync()
     {
-        if (!IsLoggedIn) { ShowTip("登录后可查看推荐歌单"); return; }
         LeaveFmMode();
         IsLoading = true;
         PlaylistStatus = "正在加载推荐歌单...";
