@@ -899,7 +899,7 @@ public class NeteaseOpenApiClient
                 Artist = string.Join(" / ", artists),
                 Album = album ?? string.Empty,
                 DurationMs = dur,
-                CoverUrl = CoverWithSize(ToHttps(cover), 300),
+                CoverUrl = CoverWithSize(ToHttps(cover), 1000),
             };
             song.Internal ??= new Dictionary<string, object>();
             song.Internal["Vip"] = isVip;
