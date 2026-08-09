@@ -475,19 +475,14 @@ public class NeteaseOpenApiClient
     /// 修正私人 FM 歌曲的封面/专辑：FM 接口返回的 album 是"上下文关联专辑"，
     /// picUrl 常指向与歌曲真实发行专辑不符的图。按 song.id 批量调用
     /// /song/detail 取标准 al.picUrl 覆盖 CoverUrl（与 Album 名）。
-    /// 三级兜底：①官方 music.163.com（cookie，可能限流空 body）→ ② eapi interface.music.163.com
-    /// （桌面客户端伪装，不同源限流，NeteaseEapi.cs）→ ③ 公共 zm.wwoyun.cn / iwenwiki。
+    /// 优先级：① eapi interface.music.163.com（桌面客户端伪装，不同源限流，最稳，NeteaseEapi.cs）
+    /// → ② 官方 music.163.com/api（cookie，可能限流空 body）→ ③ 公共 zm.wwoyun.cn / iwenwiki。
     /// 全部失败不影响播放，沿用 FM 原始封面。
     /// </summary>
     private async Task CorrectFmMetadataAsync(List<OnlineSong> songs)
     {
         if (songs == null || songs.Count == 0) return;
-        // ① 官方 music.163.com/api/song/detail（依赖用户 Cookie；可能限流/被风控返回空 body）
-        if (await TryCorrectSongCoversAsync(songs,
-                $"https://music.163.com/api/song/detail?ids=[{string.Join(",", songs.Select(s => s.Id))}]",
-                expectArrayKey: "songs"))
-            return;
-        // ② eapi 桌面客户端接口（interface.music.163.com，与 music.163.com 不同源限流）
+        // ① eapi 桌面客户端接口（interface.music.163.com，与 music.163.com 不同源限流，实测最稳）
         var eapiIds = songs.Where(s => long.TryParse(s.Id, out _)).Select(s => long.Parse(s.Id)).ToArray();
         if (eapiIds.Length > 0)
         {
@@ -504,6 +499,11 @@ public class NeteaseOpenApiClient
                 catch { /* eapi 失败继续兜底 */ }
             }
         }
+        // ② 官方 music.163.com/api/song/detail（依赖用户 Cookie；可能限流/被风控返回空 body）
+        if (await TryCorrectSongCoversAsync(songs,
+                $"https://music.163.com/api/song/detail?ids=[{string.Join(",", songs.Select(s => s.Id))}]",
+                expectArrayKey: "songs"))
+            return;
         // ③ 公共 NeteaseCloudMusicApi 兜底（zm.wwoyun.cn / iwenwiki.com:3000 不需 Cookie）
         foreach (var baseUrl in PublicApiBases)
         {
@@ -873,20 +873,21 @@ public class NeteaseOpenApiClient
     }
 
     /// <summary>歌词（LRC + 翻译）。
-    /// 三级兜底：① 官方 /api/song/lyric（tv=0）→ ② eapi /eapi/song/lyric/v1（interface.music.163.com 桌面客户端接口，
-    /// 与 music.163.com 不同源限流，Lyrico-Plugins 同款实现）→ ③ 公共 NeteaseCloudMusicApi 实例。
+    /// 优先级：① eapi /eapi/song/lyric/v1（interface.music.163.com 桌面客户端接口，与 music.163.com 不同源限流，
+    /// Lyrico-Plugins 同款实现，实测最稳）→ ② 官方 /api/song/lyric（tv=0）→ ③ 公共 NeteaseCloudMusicApi 实例。
     /// 官方接口对部分歌曲（风控/匿名限制/新歌）返回空 lrc 时由后两级顶上。</summary>
     public async Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(string songId)
     {
         if (string.IsNullOrWhiteSpace(songId)) return null;
-        var result = await FetchLyricFromOfficialAsync(songId);
-        if (result != null) return result;
-        // 兜底 ②：eapi 桌面客户端接口（interface.music.163.com，不同源限流；无需匿名会话，实测 song id 可直取）
+        // ① eapi 桌面客户端接口（interface.music.163.com，不同源限流；无需匿名会话，实测 song id 可直取）
         if (long.TryParse(songId, out var eapiId))
         {
-            result = await NeteaseEapi.FetchLyricAsync(_http, eapiId, _cookie);
+            var result = await NeteaseEapi.FetchLyricAsync(_http, eapiId, _cookie);
             if (result != null) return result;
         }
+        // ② 官方 /api/song/lyric（tv=0）
+        var official = await FetchLyricFromOfficialAsync(songId);
+        if (official != null) return official;
         // 兜底 ③：公共 NeteaseCloudMusicApi 实例
         foreach (var api in PublicApiBases)
         {
