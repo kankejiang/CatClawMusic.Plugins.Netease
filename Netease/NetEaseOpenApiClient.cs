@@ -855,14 +855,21 @@ public class NeteaseOpenApiClient
     }
 
     /// <summary>歌词（LRC + 翻译）。
-    /// tv=0 请求原版歌词（tv=-1 为非标准取值）；官方接口对部分歌曲（风控/匿名限制/新歌）返回空 lrc 时，
-    /// 回退到公共 NeteaseCloudMusicApi 实例兜底（播放直链已有同类兜底，歌词此前缺失）。</summary>
+    /// 三级兜底：① 官方 /api/song/lyric（tv=0）→ ② eapi /eapi/song/lyric/v1（interface.music.163.com 桌面客户端接口，
+    /// 与 music.163.com 不同源限流，Lyrico-Plugins 同款实现）→ ③ 公共 NeteaseCloudMusicApi 实例。
+    /// 官方接口对部分歌曲（风控/匿名限制/新歌）返回空 lrc 时由后两级顶上。</summary>
     public async Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(string songId)
     {
         if (string.IsNullOrWhiteSpace(songId)) return null;
         var result = await FetchLyricFromOfficialAsync(songId);
         if (result != null) return result;
-        // 兜底：公共 NeteaseCloudMusicApi 实例
+        // 兜底 ②：eapi 桌面客户端接口（interface.music.163.com，不同源限流；无需匿名会话，实测 song id 可直取）
+        if (long.TryParse(songId, out var eapiId))
+        {
+            result = await NeteaseEapi.FetchLyricAsync(_http, eapiId, _cookie);
+            if (result != null) return result;
+        }
+        // 兜底 ③：公共 NeteaseCloudMusicApi 实例
         foreach (var api in PublicApiBases)
         {
             try
