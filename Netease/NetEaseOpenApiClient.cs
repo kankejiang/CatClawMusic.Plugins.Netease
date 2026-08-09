@@ -473,36 +473,68 @@ public class NeteaseOpenApiClient
 
     /// <summary>
     /// 修正私人 FM 歌曲的封面/专辑：FM 接口返回的 album 是"上下文关联专辑"，
-    /// picUrl 常指向与歌曲真实发行专辑不符的图。此处按 song.id 批量调用
-    /// /api/song/detail 取标准 al.picUrl 覆盖 CoverUrl（与 Album 名）。
-    /// 失败不影响播放，沿用 FM 原始封面。
+    /// picUrl 常指向与歌曲真实发行专辑不符的图。按 song.id 批量调用
+    /// /song/detail 取标准 al.picUrl 覆盖 CoverUrl（与 Album 名）。
+    /// 三级兜底：①官方 music.163.com（cookie）→②公共 zm.wwoyun.cn →③公共 iwenwiki。
+    /// 全部失败不影响播放，沿用 FM 原始封面。
     /// </summary>
     private async Task CorrectFmMetadataAsync(List<OnlineSong> songs)
     {
         if (songs == null || songs.Count == 0) return;
+        // ① 官方 music.163.com/api/song/detail（依赖用户 Cookie；可能限流/被风控返回空 body）
+        if (await TryCorrectSongCoversAsync(songs,
+                $"https://music.163.com/api/song/detail?ids=[{string.Join(",", songs.Select(s => s.Id))}]",
+                expectArrayKey: "songs"))
+            return;
+        // ② 公共 NeteaseCloudMusicApi 兜底（zm.wwoyun.cn / iwenwiki.com:3000 不需 Cookie）
+        foreach (var baseUrl in PublicApiBases)
+        {
+            if (await TryCorrectSongCoversAsync(songs,
+                    $"{baseUrl}/song/detail?ids={string.Join(",", songs.Select(s => s.Id))}",
+                    expectArrayKey: "songs"))
+                return;
+        }
+    }
+
+    /// <summary>
+    /// 通用单曲封面校正：从 URL 拉 JSON（形如 {songs:[...]}），按 id 匹配覆盖 CoverUrl/Album。
+    /// 返回是否成功应用了任何更新。失败/解析错误返回 false（调用方继续尝试下一级）。
+    /// </summary>
+    private async Task<bool> TryCorrectSongCoversAsync(List<OnlineSong> songs, string url, string expectArrayKey)
+    {
         try
         {
-            var ids = string.Join(",", songs.Select(s => s.Id));
-            using var doc = await GetJsonAsync($"https://music.163.com/api/song/detail?ids=[{ids}]");
-            if (doc == null || !doc.RootElement.TryGetProperty("songs", out var list) || list.ValueKind != JsonValueKind.Array)
-                return;
-            foreach (var el in list.EnumerateArray())
+            using var doc = await GetJsonAsync(url);
+            if (doc == null || !doc.RootElement.TryGetProperty(expectArrayKey, out var list) || list.ValueKind != JsonValueKind.Array)
+                return false;
+            return ApplySongCoverCorrection(songs, list);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>把 /song/detail 的 songs 数组按 id 匹配，写回 CoverUrl/Album。返回是否改动过任一首。</summary>
+    private static bool ApplySongCoverCorrection(List<OnlineSong> songs, JsonElement list)
+    {
+        bool any = false;
+        foreach (var el in list.EnumerateArray())
+        {
+            if (!el.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+            var id = idEl.GetInt64().ToString();
+            var song = songs.FirstOrDefault(s => s.Id == id);
+            if (song == null) continue;
+            JsonElement al;
+            if (!el.TryGetProperty("al", out al) && !el.TryGetProperty("album", out al)) continue;
+            if (al.ValueKind != JsonValueKind.Object) continue;
+            if (al.TryGetProperty("picUrl", out var pic) && !string.IsNullOrWhiteSpace(pic.GetString()))
             {
-                if (!el.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
-                var id = idEl.GetInt64().ToString();
-                var song = songs.FirstOrDefault(s => s.Id == id);
-                if (song == null) continue;
-                if (el.TryGetProperty("al", out var al) && al.ValueKind == JsonValueKind.Object)
-                {
-                    if (al.TryGetProperty("picUrl", out var pic) && !string.IsNullOrWhiteSpace(pic.GetString()))
-                        song.CoverUrl = CoverWithSize(ToHttps(pic.GetString()), 1000);
-                    if (al.TryGetProperty("name", out var an) && !string.IsNullOrWhiteSpace(an.GetString()))
-                        song.Album = an.GetString()!;
-                }
+                song.CoverUrl = CoverWithSize(ToHttps(pic.GetString()), 1000);
+                any = true;
             }
+            if (al.TryGetProperty("name", out var an) && !string.IsNullOrWhiteSpace(an.GetString()))
+                song.Album = an.GetString()!;
         }
-            catch { /* 修正失败不影响播放，沿用 FM 原始封面 */ }
-        }
+        return any;
+    }
 
     /// <summary>私人漫游「垃圾桶」：不再推荐该歌曲（需登录；失败静默）</summary>
     public async Task<bool> FmTrashAsync(string songId)
