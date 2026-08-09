@@ -475,7 +475,8 @@ public class NeteaseOpenApiClient
     /// 修正私人 FM 歌曲的封面/专辑：FM 接口返回的 album 是"上下文关联专辑"，
     /// picUrl 常指向与歌曲真实发行专辑不符的图。按 song.id 批量调用
     /// /song/detail 取标准 al.picUrl 覆盖 CoverUrl（与 Album 名）。
-    /// 三级兜底：①官方 music.163.com（cookie）→②公共 zm.wwoyun.cn →③公共 iwenwiki。
+    /// 三级兜底：①官方 music.163.com（cookie，可能限流空 body）→ ② eapi interface.music.163.com
+    /// （桌面客户端伪装，不同源限流，NeteaseEapi.cs）→ ③ 公共 zm.wwoyun.cn / iwenwiki。
     /// 全部失败不影响播放，沿用 FM 原始封面。
     /// </summary>
     private async Task CorrectFmMetadataAsync(List<OnlineSong> songs)
@@ -486,7 +487,24 @@ public class NeteaseOpenApiClient
                 $"https://music.163.com/api/song/detail?ids=[{string.Join(",", songs.Select(s => s.Id))}]",
                 expectArrayKey: "songs"))
             return;
-        // ② 公共 NeteaseCloudMusicApi 兜底（zm.wwoyun.cn / iwenwiki.com:3000 不需 Cookie）
+        // ② eapi 桌面客户端接口（interface.music.163.com，与 music.163.com 不同源限流）
+        var eapiIds = songs.Where(s => long.TryParse(s.Id, out _)).Select(s => long.Parse(s.Id)).ToArray();
+        if (eapiIds.Length > 0)
+        {
+            var raw = await NeteaseEapi.FetchSongDetailRawAsync(_http, eapiIds, _cookie);
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(raw);
+                    if (doc.RootElement.TryGetProperty("songs", out var list) && list.ValueKind == JsonValueKind.Array
+                        && ApplySongCoverCorrection(songs, list))
+                        return;
+                }
+                catch { /* eapi 失败继续兜底 */ }
+            }
+        }
+        // ③ 公共 NeteaseCloudMusicApi 兜底（zm.wwoyun.cn / iwenwiki.com:3000 不需 Cookie）
         foreach (var baseUrl in PublicApiBases)
         {
             if (await TryCorrectSongCoversAsync(songs,

@@ -122,6 +122,18 @@ internal static class NeteaseEapi
         return (lrc, string.IsNullOrWhiteSpace(tlyric) ? null : tlyric);
     }
 
+    /// <summary>eapi 单曲详情批量（/eapi/v3/song/detail，c="[{\"id\":...}]"）；返回解密后的 JSON 文本，失败 null</summary>
+    public static async Task<string?> FetchSongDetailRawAsync(HttpClient http, long[] songIds, string? userCookie)
+    {
+        if (songIds == null || songIds.Length == 0) return null;
+        // c=JSON.stringify([{id:1},{id:2}]) —— 与 JS JSON.stringify 字节一致
+        var c = "[" + string.Join(",", songIds.Select(i => $"{{\"id\":{i}}}")) + "]";
+        return await RequestAsync(http, "/eapi/v3/song/detail", new Dictionary<string, object>
+        {
+            ["c"] = c,
+        }, userCookie);
+    }
+
     // ── 内部 ──
 
     private static string Md5Hex(string text)
