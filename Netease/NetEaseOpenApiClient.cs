@@ -454,17 +454,55 @@ public class NeteaseOpenApiClient
                 using var doc = await GetJsonAsync("https://music.163.com/api/v1/radio/get");
                 if (doc == null || !doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
                     break;
-                foreach (var s in data.EnumerateArray())
+            foreach (var s in data.EnumerateArray())
+            {
+                var song = ParseSong(s);
+                if (song != null && !string.IsNullOrWhiteSpace(song.Id) && seen.Add(song.Id))
+                    collected.Add(song);
+            }
+        }
+        if (collected.Count == 0) return null;
+        // 私人 FM（/api/v1/radio/get）返回的 song.album 是推荐引擎的"上下文关联专辑"，
+        // 其 picUrl 常与歌曲真实发行专辑不符 → 播放页显示错误封面/错歌词（已验证）。
+        // 按 song.id 批量调 /api/song/detail 取标准 al.picUrl 覆盖。
+        await CorrectFmMetadataAsync(collected);
+        return collected;
+    }
+    catch { return null; }
+}
+
+    /// <summary>
+    /// 修正私人 FM 歌曲的封面/专辑：FM 接口返回的 album 是"上下文关联专辑"，
+    /// picUrl 常指向与歌曲真实发行专辑不符的图。此处按 song.id 批量调用
+    /// /api/song/detail 取标准 al.picUrl 覆盖 CoverUrl（与 Album 名）。
+    /// 失败不影响播放，沿用 FM 原始封面。
+    /// </summary>
+    private async Task CorrectFmMetadataAsync(List<OnlineSong> songs)
+    {
+        if (songs == null || songs.Count == 0) return;
+        try
+        {
+            var ids = string.Join(",", songs.Select(s => s.Id));
+            using var doc = await GetJsonAsync($"https://music.163.com/api/song/detail?ids=[{ids}]");
+            if (doc == null || !doc.RootElement.TryGetProperty("songs", out var list) || list.ValueKind != JsonValueKind.Array)
+                return;
+            foreach (var el in list.EnumerateArray())
+            {
+                if (!el.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                var id = idEl.GetInt64().ToString();
+                var song = songs.FirstOrDefault(s => s.Id == id);
+                if (song == null) continue;
+                if (el.TryGetProperty("al", out var al) && al.ValueKind == JsonValueKind.Object)
                 {
-                    var song = ParseSong(s);
-                    if (song != null && !string.IsNullOrWhiteSpace(song.Id) && seen.Add(song.Id))
-                        collected.Add(song);
+                    if (al.TryGetProperty("picUrl", out var pic) && !string.IsNullOrWhiteSpace(pic.GetString()))
+                        song.CoverUrl = CoverWithSize(ToHttps(pic.GetString()), 1000);
+                    if (al.TryGetProperty("name", out var an) && !string.IsNullOrWhiteSpace(an.GetString()))
+                        song.Album = an.GetString()!;
                 }
             }
-            return collected.Count > 0 ? collected : null;
         }
-        catch { return null; }
-    }
+            catch { /* 修正失败不影响播放，沿用 FM 原始封面 */ }
+        }
 
     /// <summary>私人漫游「垃圾桶」：不再推荐该歌曲（需登录；失败静默）</summary>
     public async Task<bool> FmTrashAsync(string songId)
@@ -784,13 +822,40 @@ public class NeteaseOpenApiClient
         return null;
     }
 
-    /// <summary>歌词（LRC + 翻译）</summary>
+    /// <summary>歌词（LRC + 翻译）。
+    /// tv=0 请求原版歌词（tv=-1 为非标准取值）；官方接口对部分歌曲（风控/匿名限制/新歌）返回空 lrc 时，
+    /// 回退到公共 NeteaseCloudMusicApi 实例兜底（播放直链已有同类兜底，歌词此前缺失）。</summary>
     public async Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(string songId)
     {
         if (string.IsNullOrWhiteSpace(songId)) return null;
+        var result = await FetchLyricFromOfficialAsync(songId);
+        if (result != null) return result;
+        // 兜底：公共 NeteaseCloudMusicApi 实例
+        foreach (var api in PublicApiBases)
+        {
+            try
+            {
+                using var doc = await GetJsonAsync($"{api}/lyric?id={songId}");
+                if (doc == null) continue;
+                string? lrc = null, tlyric = null;
+                if (doc.RootElement.TryGetProperty("lrc", out var ln) && ln.TryGetProperty("lyric", out var lt))
+                    lrc = lt.GetString();
+                if (doc.RootElement.TryGetProperty("tlyric", out var tn) && tn.TryGetProperty("lyric", out var tt))
+                    tlyric = tt.GetString();
+                if (!string.IsNullOrWhiteSpace(lrc))
+                    return (lrc, string.IsNullOrWhiteSpace(tlyric) ? null : tlyric);
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    /// <summary>官方 /api/song/lyric 取词（lv=1 原版，tv=0 不请求翻译字段外的冗余版）</summary>
+    private async Task<(string? Lrc, string? TLrc)?> FetchLyricFromOfficialAsync(string songId)
+    {
         try
         {
-            using var doc = await GetJsonAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=1&kv=1&tv=-1");
+            using var doc = await GetJsonAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=1&tv=0");
             if (doc == null) return null;
             string? lrc = null, tlyric = null;
             if (doc.RootElement.TryGetProperty("lrc", out var ln) && ln.TryGetProperty("lyric", out var lt))
@@ -929,11 +994,14 @@ public class NeteaseOpenApiClient
             : url;
     }
 
-    /// <summary>网易云图片服务按尺寸裁剪（?param=WxH），节省流量与内存</summary>
+    /// <summary>网易云图片服务按尺寸裁剪（?param=WxH），节省流量与内存。
+    /// 已带 ?param= 原样返回；已带其他查询参数时用 &amp; 追加，避免拼出非法双问号 URL（如 ...?x=1?param=...），
+    /// 否则宿主按该 URL 下载失败会回落占位图/陈旧图，表现为"错误封面"。</summary>
     private static string? CoverWithSize(string? url, int size)
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
         if (url.Contains("?param=", StringComparison.Ordinal)) return url;
-        return $"{url}?param={size}y{size}";
+        var sep = url.Contains('?') ? '&' : '?';
+        return $"{url}{sep}param={size}y{size}";
     }
 }
