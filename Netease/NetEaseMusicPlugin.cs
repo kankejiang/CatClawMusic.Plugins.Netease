@@ -14,7 +14,7 @@ namespace CatClawMusic.Plugins.Netease;
 /// 由插件自治提供 UI 和业务逻辑。
 /// </para>
 /// </summary>
-public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
+public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, ILyricsProviderPlugin
 {
     private readonly NeteaseOpenApiClient _client = new();
 
@@ -110,6 +110,94 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin
 
     public Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(OnlineSong song)
         => _client.GetLyricsAsync(song.Id);
+
+    // ── ILyricsProviderPlugin：让宿主歌词链（Navidrome > 同名.lrc > 嵌入 > 插件）能消费在线歌词 ──
+    // 宿主按 RemoteId("netease:{id}") 路由；当前构建未接 IOnlineMusicPlugin 歌词链，
+    // 但 ILyricsProviderPlugin 已是宿主兜底链末级，实现它即可在当前宿主直接显示在线歌词。
+
+    /// <summary>歌词服务可用（仅需登录态由 Cookie 增强，匿名也能取大部分词）</summary>
+    public bool IsAvailable => true;
+
+    /// <summary>
+    /// 宿主歌词兜底链调用：从 <paramref name="song"/>.RemoteId 解析网易云 songId，
+    /// 拉取 LRC（+翻译）并解析为结构化 <see cref="LrcLyrics"/> 返回。
+    /// </summary>
+    public async Task<LrcLyrics?> GetLyricsAsync(Song song)
+    {
+        if (song?.RemoteId == null) return null;
+        var id = ExtractNeteaseId(song.RemoteId);
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var pair = await _client.GetLyricsAsync(id);
+        if (pair == null || string.IsNullOrWhiteSpace(pair.Value.Lrc)) return null;
+        return ParseNeteaseLyrics(pair.Value.Lrc, pair.Value.TLrc);
+    }
+
+    /// <summary>从 "netease:12345" 形式 RemoteId 提取 songId</summary>
+    private static string? ExtractNeteaseId(string remoteId)
+    {
+        var idx = remoteId.IndexOf(':', StringComparison.Ordinal);
+        return idx >= 0 ? remoteId.Substring(idx + 1) : remoteId;
+    }
+
+    /// <summary>
+    /// 解析网易云 LRC（+翻译）为 <see cref="LrcLyrics"/>。
+    /// lrc/tlyric 是两份独立标准 LRC，按时间戳把翻译挂到对应原词行；元数据行（[ti:]/[ar:]）忽略。
+    /// 自带最小解析器，避免依赖宿主 LyricsService 实例（插件取不到其服务）。
+    /// </summary>
+    private static LrcLyrics? ParseNeteaseLyrics(string lrc, string? tlyric)
+    {
+        var main = ParseRawLrc(lrc);
+        if (main == null || main.Count == 0) return null;
+        Dictionary<TimeSpan, string>? trans = null;
+        if (!string.IsNullOrWhiteSpace(tlyric))
+        {
+            var t = ParseRawLrc(tlyric);
+            if (t != null)
+            {
+                trans = new Dictionary<TimeSpan, string>();
+                foreach (var (ts, text) in t)
+                    if (!trans.ContainsKey(ts)) trans[ts] = text; // 重复时间戳以首个为准，避免 ToDictionary 抛异常
+            }
+        }
+        var lines = new List<LrcLyricLine>();
+        foreach (var (ts, text) in main)
+        {
+            var line = new LrcLyricLine { Timestamp = ts, Text = text };
+            if (trans != null && trans.TryGetValue(ts, out var tr) && !string.IsNullOrWhiteSpace(tr))
+                line.Translation = tr;
+            lines.Add(line);
+        }
+        lines.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+        return new LrcLyrics { Lines = lines };
+    }
+
+    /// <summary>解析单份 LRC 文本为 (时间戳, 文本) 列表（同一行多时间戳会展开为多行）</summary>
+    private static List<(TimeSpan Ts, string Text)>? ParseRawLrc(string lrc)
+    {
+        var result = new List<(TimeSpan, string)>();
+        foreach (var raw in lrc.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            var timestamps = new List<TimeSpan>();
+            while (line.StartsWith("[", StringComparison.Ordinal))
+            {
+                var close = line.IndexOf(']');
+                if (close < 0) break;
+                var tsStr = line.Substring(1, close - 1).Trim();
+                // 支持 mm:ss.xx / mm:ss.xxx / mm:ss
+                if (TimeSpan.TryParseExact(tsStr, new[] { @"mm\:ss\.fff", @"mm\:ss\.ff", @"mm\:ss" },
+                        System.Globalization.CultureInfo.InvariantCulture, out var ts))
+                    timestamps.Add(ts);
+                line = line.Substring(close + 1);
+            }
+            var text = line.Trim();
+            if (timestamps.Count > 0 && !string.IsNullOrEmpty(text))
+                foreach (var ts in timestamps)
+                    result.Add((ts, text));
+        }
+        return result.Count > 0 ? result : null;
+    }
 
     /// <summary>私人漫游（随机推荐）</summary>
     public Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10)
