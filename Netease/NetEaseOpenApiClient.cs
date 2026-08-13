@@ -52,7 +52,9 @@ public class NeteaseOpenApiClient
     /// <summary>设置用户 Cookie（增强推荐个性化/播放完整度；可空 = 匿名）</summary>
     public void SetCookie(string? cookie) => _cookie = cookie;
 
-    public bool HasCookie => !string.IsNullOrWhiteSpace(_cookie);
+    /// <summary>是否已登录：必须包含 MUSIC_U 登录 Cookie（仅匿名 Cookie 不算登录）</summary>
+    public bool HasCookie => !string.IsNullOrWhiteSpace(_cookie)
+        && _cookie.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 浏览器登录配置：宿主 WebView 打开 music.163.com 登录页，
@@ -73,10 +75,12 @@ public class NeteaseOpenApiClient
 
     /// <summary>
     /// 接收宿主从 WebView 提取的完整 Cookie 字符串，持久化并刷新内存状态。
+    /// 仅当包含 MUSIC_U 登录 Cookie 时才接受（防止未登录时的匿名 Cookie 覆盖已登录状态）。
     /// </summary>
     public Task ApplyLoginCookieAsync(string cookie)
     {
-        if (!string.IsNullOrWhiteSpace(cookie))
+        if (!string.IsNullOrWhiteSpace(cookie)
+            && cookie.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase))
         {
             _cookie = cookie;
             PersistCookie(cookie);
@@ -91,7 +95,7 @@ public class NeteaseOpenApiClient
     /// <summary>已登录账号昵称（/api/nuser/account/get 实名验证；失败回退本地缓存）</summary>
     public async Task<string?> GetAccountNameAsync()
     {
-        if (string.IsNullOrWhiteSpace(_cookie)) return null;
+        if (!HasCookie) return null;
         try
         {
             using var doc = await GetJsonAsync("https://music.163.com/api/nuser/account/get");
