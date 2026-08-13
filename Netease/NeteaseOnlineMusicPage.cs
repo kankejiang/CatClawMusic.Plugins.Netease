@@ -1,3 +1,4 @@
+using CatClawMusic.Core.Interfaces;
 using CatClawMusic.Core.Models;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
@@ -397,10 +398,33 @@ public class NeteaseOnlineMusicPage : ContentPage
         }
         if (!_vm.SupportsLogin || _vm.CurrentLoginInfo == null) return;
 
-        // 跳转宿主的 WebView 登录页（通过 Shell 路由）。
-        // 宿主 WebViewLoginViewModel 通过 platform 参数匹配 IOnlineMusicPlugin.PlatformName，
-        // 网易云插件的 PlatformName 固定为 "netease"。
-        await Shell.Current.GoToAsync($"webviewlogin?platform=netease");
+        try
+        {
+            // 跳转宿主的 WebView 登录页（通过 Shell 路由）。
+            // 宿主 WebViewLoginViewModel 通过 platform 参数匹配 IOnlineMusicPlugin.PlatformName，
+            // 网易云插件的 PlatformName 固定为 "netease"。
+            if (Shell.Current != null)
+            {
+                await Shell.Current.GoToAsync($"webviewlogin?platform=netease");
+                return;
+            }
+
+            // 桌面端宿主无 Shell（窗口直连，不走 Shell 导航栈）：
+            // 回退走宿主导航服务（NavigationService 桌面端会把路由解析为页面并嵌入主区域打开）。
+            var nav = _services.GetService<INavigationService>();
+            if (nav != null)
+            {
+                await nav.NavigateToAsync($"webviewlogin?platform=netease");
+                return;
+            }
+
+            _vm.ShowTip("当前界面不支持登录，请在宿主设置页完成登录");
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("NeteasePlugin", $"[Login] 打开登录页失败: {ex.Message}");
+            _vm.ShowTip("打开登录页失败");
+        }
     }
 
     private void AdjustPlaylistSpan()
