@@ -225,6 +225,14 @@ public class NeteaseArtistPage : ContentPage
 
     private async Task ShowTipAsync(string message)
     {
-        try { await DisplayAlertAsync("提示", message, "确定"); } catch { }
+        try
+        {
+            var dialog = _services.GetService<IDialogService>();
+            if (dialog != null)
+                await dialog.ShowAlertAsync("提示", message, "确定");
+            else
+                await DisplayAlertAsync("提示", message, "确定");
+        }
+        catch { }
     }
 }
