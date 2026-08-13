@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using CatClawMusic.Core.Interfaces;
 using CatClawMusic.Core.Models;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
@@ -45,7 +46,17 @@ public class NeteaseAlbumPage : ContentPage
             Content = new Label { Text = "←", FontSize = 22, TextColor = Colors.White, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Margin = new Thickness(0, -3, 0, 0) },
         };
         var backTap = new TapGestureRecognizer();
-        backTap.Tapped += async (_, _) => { try { await Shell.Current.Navigation.PopAsync(); } catch { } };
+        backTap.Tapped += async (_, _) =>
+        {
+            try
+            {
+                if (Shell.Current != null)
+                    await Shell.Current.Navigation.PopAsync();
+                else if (_services.GetService<INavigationService>() is { } nav)
+                    await nav.GoBackAsync();
+            }
+            catch { }
+        };
         backButton.GestureRecognizers.Add(backTap);
 
         var coverBorder = new Border

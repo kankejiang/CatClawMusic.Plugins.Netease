@@ -483,7 +483,17 @@ public class NeteaseOnlineMusicPage : ContentPage
         var backLabel = (Label)border.Content!;
         backLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
         var tap = new TapGestureRecognizer();
-        tap.Tapped += async (_, _) => { try { await Shell.Current.Navigation.PopAsync(); } catch { } };
+        tap.Tapped += async (_, _) =>
+        {
+            try
+            {
+                if (Shell.Current != null)
+                    await Shell.Current.Navigation.PopAsync();
+                else if (_services.GetService<INavigationService>() is { } nav)
+                    await nav.GoBackAsync();
+            }
+            catch { }
+        };
         border.GestureRecognizers.Add(tap);
         return border;
     }
