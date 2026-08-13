@@ -27,6 +27,25 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly CollectionView _artistsView;
     private readonly ActivityIndicator _loadingIndicator;
 
+    // 响应式布局引用的控件（宽屏/窄屏切换需要重排行列归属）
+    private readonly Grid searchRowGrid;
+    private readonly Border searchBorder;
+    private readonly ScrollView searchModesScroll;
+    private readonly HorizontalStackLayout searchModesLayout;
+    private readonly Grid entryContainer;
+    private readonly Border fmCard;
+    private readonly Border dailyCard;
+    private readonly Border toplistCard;
+    private readonly Border myCard;
+    private readonly Border recommendCard;
+
+    // 响应式布局缓存（宽屏 ≥900：入口卡片一行、歌曲/歌手双列、搜索行合一）
+    private readonly GridItemsLayout _songsGridLayout = new(2, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 };
+    private readonly GridItemsLayout _artistsGridLayout = new(2, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 };
+    private readonly LinearItemsLayout _songsLinearLayout = new(ItemsLayoutOrientation.Vertical);
+    private readonly LinearItemsLayout _artistsLinearLayout = new(ItemsLayoutOrientation.Vertical);
+    private bool _isWideLayout;
+
     public NeteaseOnlineMusicPage(NeteaseOnlineMusicViewModel vm, IServiceProvider services)
     {
         _vm = vm;
@@ -103,7 +122,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchEntry.ReturnType = ReturnType.Search;
         searchEntry.Completed += async (_, _) => await _vm.SearchSongsAsync();
 
-        var searchBorder = new Border
+        searchBorder = new Border
         {
             Content = searchEntry,
             Padding = new Thickness(14, 8),
@@ -114,11 +133,11 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
 
         // ── 搜索类型 chips（歌曲/歌单/歌手）──
-        var searchModesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 0, 16, 6) };
+        searchModesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 0, 16, 6) };
         BindableLayout.SetItemsSource(searchModesLayout, _vm.SearchModes);
         BindableLayout.SetItemTemplate(searchModesLayout,
             NeteaseUiKit.CreateCategoryChipTemplate(_vm, nameof(NeteaseOnlineMusicViewModel.SelectSearchModeCommand), nameof(CategoryChipItem.Name)));
-        var searchModesScroll = new ScrollView
+        searchModesScroll = new ScrollView
         {
             Orientation = ScrollOrientation.Horizontal,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
@@ -126,45 +145,72 @@ public class NeteaseOnlineMusicPage : ContentPage
             Content = searchModesLayout,
         };
 
+        // ── 搜索行容器（窄屏：搜索框上、chips 下；宽屏：同一行右侧）──
+        searchRowGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Star } },
+            RowDefinitions = new RowDefinitionCollection
+            {
+                new() { Height = GridLength.Auto },
+                new() { Height = GridLength.Auto },
+            },
+            Children = { searchBorder, searchModesScroll },
+        };
+        Grid.SetRow(searchBorder, 0);
+        Grid.SetRow(searchModesScroll, 1);
+
         // ── 功能入口（登录后可见：我的歌单 / 推荐歌单）──
-        var fmCard = NeteaseUiKit.CreateEntryCard("🎧 私人漫游", "随机推荐", "#667eea", "#764ba2");
+        fmCard = NeteaseUiKit.CreateEntryCard("🎧 私人漫游", "随机推荐", "#667eea", "#764ba2");
         var fmTap = new TapGestureRecognizer();
         fmTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadPrivateFmCommand));
         fmCard.GestureRecognizers.Add(fmTap);
 
-        var dailyCard = NeteaseUiKit.CreateEntryCard("📅 每日推荐", "今天想听什么", "#f7971e", "#ffd200");
+        dailyCard = NeteaseUiKit.CreateEntryCard("📅 每日推荐", "今天想听什么", "#f7971e", "#ffd200");
         var dailyTap = new TapGestureRecognizer();
         dailyTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadDailyRecommendCommand));
         dailyCard.GestureRecognizers.Add(dailyTap);
 
-        var toplistCard = NeteaseUiKit.CreateEntryCard("🔥 排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
+        toplistCard = NeteaseUiKit.CreateEntryCard("🔥 排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
         var toplistTap = new TapGestureRecognizer();
         toplistTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadToplistsCommand));
         toplistCard.GestureRecognizers.Add(toplistTap);
 
-        var myCard = NeteaseUiKit.CreateEntryCard("💛 我的歌单", "创建与收藏", "#11998e", "#38ef7d");
+        myCard = NeteaseUiKit.CreateEntryCard("💛 我的歌单", "创建与收藏", "#11998e", "#38ef7d");
         myCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
         var myTap = new TapGestureRecognizer();
         myTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadMyPlaylistsCommand));
         myCard.GestureRecognizers.Add(myTap);
 
-        var recommendCard = NeteaseUiKit.CreateEntryCard("✨ 推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
+        recommendCard = NeteaseUiKit.CreateEntryCard("✨ 推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
         recommendCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
         var recommendTap = new TapGestureRecognizer();
         recommendTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadRecommendPlaylistsCommand));
         recommendCard.GestureRecognizers.Add(recommendTap);
 
-        var entryRow1 = CreateEntryRow(fmCard, dailyCard);
-        var entryRow2 = CreateEntryRow(toplistCard, myCard);
-        var entryRow3 = CreateEntryRow(recommendCard, null);
-        entryRow3.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
-
-        var entryContainer = new VerticalStackLayout
+        // 入口卡片容器（窄屏两列三行；宽屏一行五列，由 ApplyWideLayout/ApplyNarrowLayout 重排行列归属）
+        entryContainer = new Grid
         {
-            Spacing = 10,
             Padding = new Thickness(16, 2, 16, 6),
-            Children = { entryRow1, entryRow2, entryRow3 },
+            ColumnSpacing = 10,
+            RowSpacing = 10,
+            ColumnDefinitions = new ColumnDefinitionCollection
+            {
+                new() { Width = GridLength.Star },
+                new() { Width = GridLength.Star },
+            },
+            RowDefinitions = new RowDefinitionCollection
+            {
+                new() { Height = GridLength.Auto },
+                new() { Height = GridLength.Auto },
+                new() { Height = GridLength.Auto },
+            },
+            Children = { fmCard, dailyCard, toplistCard, myCard, recommendCard },
         };
+        Grid.SetRow(fmCard, 0); Grid.SetColumn(fmCard, 0);
+        Grid.SetRow(dailyCard, 0); Grid.SetColumn(dailyCard, 1);
+        Grid.SetRow(toplistCard, 1); Grid.SetColumn(toplistCard, 0);
+        Grid.SetRow(myCard, 1); Grid.SetColumn(myCard, 1);
+        Grid.SetRow(recommendCard, 2); Grid.SetColumn(recommendCard, 0);
 
         // ── 分类 chips（水平滚动，仅歌单广场可见）──
         var categoriesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 4, 16, 6) };
@@ -205,6 +251,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         _artistsView = new CollectionView
         {
             SelectionMode = SelectionMode.Single,
+            ItemsLayout = _artistsLinearLayout,
             Margin = new Thickness(0, 6, 0, 0),
         };
         _artistsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
@@ -272,6 +319,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         _songsView = new CollectionView
         {
             SelectionMode = SelectionMode.Single,
+            ItemsLayout = _songsLinearLayout,
             Margin = new Thickness(0, 6, 0, 0),
             RemainingItemsThreshold = 8,
         };
@@ -332,51 +380,32 @@ public class NeteaseOnlineMusicPage : ContentPage
             RowDefinitions = new RowDefinitionCollection
             {
                 new() { Height = GridLength.Auto }, // header
-                new() { Height = GridLength.Auto }, // search
-                new() { Height = GridLength.Auto }, // search modes
+                new() { Height = GridLength.Auto }, // search row（搜索框 + chips）
                 new() { Height = GridLength.Auto }, // entry cards
                 new() { Height = GridLength.Auto }, // categories
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, searchBorder, searchModesScroll, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder },
+            Children = { headerGrid, searchRowGrid, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder },
         };
-        Grid.SetRow(searchBorder, 1);
-        Grid.SetRow(searchModesScroll, 2);
-        Grid.SetRow(entryContainer, 3);
-        Grid.SetRow(categoriesScroll, 4);
-        Grid.SetRow(_playlistsView, 5);
-        Grid.SetRow(_artistsView, 5);
-        Grid.SetRow(_songsView, 5);
-        Grid.SetRow(_loadingIndicator, 5);
-        Grid.SetRow(tipBorder, 5);
+        Grid.SetRow(searchRowGrid, 1);
+        Grid.SetRow(entryContainer, 2);
+        Grid.SetRow(categoriesScroll, 3);
+        Grid.SetRow(_playlistsView, 4);
+        Grid.SetRow(_artistsView, 4);
+        Grid.SetRow(_songsView, 4);
+        Grid.SetRow(_loadingIndicator, 4);
+        Grid.SetRow(tipBorder, 4);
 
         Content = contentGrid;
 
-        // 页面尺寸变化时调整歌单列数
-        SizeChanged += (_, _) => AdjustPlaylistSpan();
-    }
-
-    /// <summary>两列入口行（第二个可为 null = 半行）</summary>
-    private static Grid CreateEntryRow(Border left, Border? right)
-    {
-        var row = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Star }, new() { Width = GridLength.Star } },
-            ColumnSpacing = 10,
-            Children = { left },
-        };
-        if (right != null)
-        {
-            row.Children.Add(right);
-            Grid.SetColumn(right, 1);
-        }
-        return row;
+        // 尺寸变化时调整响应式布局（桌面嵌入模式下页面 SizeChanged 不触发，改挂 contentGrid）
+        contentGrid.SizeChanged += (_, _) => ApplyResponsiveLayout(contentGrid.Width);
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        AdjustPlaylistSpan();
+        ApplyResponsiveLayout(Content?.Width ?? 0);
         await _vm.OnAppearingAsync();
     }
 
@@ -431,10 +460,11 @@ public class NeteaseOnlineMusicPage : ContentPage
         }
     }
 
-    private void AdjustPlaylistSpan()
+    /// <summary>响应式布局：按可用宽度设置歌单列数、入口卡片行列、搜索行与歌曲/歌手列表列数。</summary>
+    private void ApplyResponsiveLayout(double w)
     {
-        var w = Width > 0 ? Width : (Content?.Width ?? 0);
         if (w <= 0) return;
+
         int span = w switch
         {
             < 600 => 2,
@@ -444,6 +474,91 @@ public class NeteaseOnlineMusicPage : ContentPage
             _ => 6,
         };
         if (_playlistsLayout.Span != span) _playlistsLayout.Span = span;
+
+        bool wide = w >= 900;
+        if (wide == _isWideLayout) return;
+        _isWideLayout = wide;
+
+        if (wide) ApplyWideLayout();
+        else ApplyNarrowLayout();
+    }
+
+    /// <summary>宽屏（≥900）：搜索框与 chips 同行、入口卡片一行五列、歌曲/歌手双列通栏。</summary>
+    private void ApplyWideLayout()
+    {
+        // 搜索行：一行两列 [Entry | chips]
+        searchRowGrid.RowDefinitions.Clear();
+        searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        searchRowGrid.ColumnDefinitions.Clear();
+        searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
+        searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetRow(searchBorder, 0);
+        Grid.SetColumn(searchBorder, 0);
+        searchBorder.Margin = new Thickness(16, 0, 8, 0);
+        Grid.SetRow(searchModesScroll, 0);
+        Grid.SetColumn(searchModesScroll, 1);
+        searchModesScroll.Margin = new Thickness(0, 0, 16, 0);
+        searchModesScroll.VerticalOptions = LayoutOptions.Center;
+        searchModesLayout.Padding = new Thickness(0);
+
+        // 入口卡片：一行五列
+        entryContainer.ColumnDefinitions.Clear();
+        for (int i = 0; i < 5; i++)
+            entryContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
+        entryContainer.RowDefinitions.Clear();
+        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        SetEntryCardCell(fmCard, 0, 0);
+        SetEntryCardCell(dailyCard, 0, 1);
+        SetEntryCardCell(toplistCard, 0, 2);
+        SetEntryCardCell(myCard, 0, 3);
+        SetEntryCardCell(recommendCard, 0, 4);
+
+        // 歌曲/歌手双列通栏
+        _songsView.ItemsLayout = _songsGridLayout;
+        _artistsView.ItemsLayout = _artistsGridLayout;
+    }
+
+    /// <summary>窄屏（&lt;900）：恢复搜索框在上 chips 在下、入口卡片两列三行、列表单列。</summary>
+    private void ApplyNarrowLayout()
+    {
+        // 搜索行：两行 [搜索框 / chips]
+        searchRowGrid.ColumnDefinitions.Clear();
+        searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
+        searchRowGrid.RowDefinitions.Clear();
+        searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(searchBorder, 0);
+        Grid.SetColumn(searchBorder, 0);
+        searchBorder.Margin = new Thickness(16, 0, 16, 4);
+        Grid.SetRow(searchModesScroll, 1);
+        Grid.SetColumn(searchModesScroll, 0);
+        searchModesScroll.Margin = new Thickness(0);
+        searchModesScroll.VerticalOptions = LayoutOptions.Fill;
+        searchModesLayout.Padding = new Thickness(16, 0, 16, 6);
+
+        // 入口卡片：两列三行
+        entryContainer.ColumnDefinitions.Clear();
+        entryContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
+        entryContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
+        entryContainer.RowDefinitions.Clear();
+        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        SetEntryCardCell(fmCard, 0, 0);
+        SetEntryCardCell(dailyCard, 0, 1);
+        SetEntryCardCell(toplistCard, 1, 0);
+        SetEntryCardCell(myCard, 1, 1);
+        SetEntryCardCell(recommendCard, 2, 0);
+
+        // 列表单列
+        _songsView.ItemsLayout = _songsLinearLayout;
+        _artistsView.ItemsLayout = _artistsLinearLayout;
+    }
+
+    private static void SetEntryCardCell(Border card, int row, int column)
+    {
+        Grid.SetRow(card, row);
+        Grid.SetColumn(card, column);
     }
 
     private async void OnPlaylistSelected(object? sender, SelectionChangedEventArgs e)
