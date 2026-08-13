@@ -189,7 +189,15 @@ public class NeteaseAlbumPage : ContentPage
         _playing = false;
         if (played == 0)
         {
-            try { await DisplayAlertAsync("提示", "暂时取不到播放链接", "确定"); } catch { }
+            try
+            {
+                var dialog = _services.GetService<IDialogService>();
+                if (dialog != null)
+                    await dialog.ShowAlertAsync("提示", "暂时取不到播放链接", "确定");
+                else
+                    await DisplayAlertAsync("提示", "暂时取不到播放链接", "确定");
+            }
+            catch { }
         }
     }
 }

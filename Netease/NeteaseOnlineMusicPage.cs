@@ -391,8 +391,12 @@ public class NeteaseOnlineMusicPage : ContentPage
     {
         if (_vm.IsLoggedIn)
         {
-            // 二级确认：防止误触右上角用户名直接退出登录
-            bool ok = await DisplayAlert("退出登录", "确定要退出网易云账号吗？", "退出", "取消");
+            // 二级确认：防止误触右上角用户名直接退出登录。
+            // 桌面嵌入模式下本页无 Window，Page.DisplayAlert 不弹窗，必须走宿主 IDialogService（MainPage 有 Window）。
+            var dialog = _services.GetService<IDialogService>();
+            bool ok = dialog != null
+                ? await dialog.ShowConfirmAsync("退出登录", "确定要退出网易云账号吗？", "退出", "取消")
+                : await DisplayAlertAsync("退出登录", "确定要退出网易云账号吗？", "退出", "取消");
             if (ok) await _vm.LogoutAsync();
             return;
         }
