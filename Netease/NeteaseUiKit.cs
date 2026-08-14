@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.IO;
 using CatClawMusic.Core.Models;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
@@ -46,7 +48,7 @@ public static class NeteaseUiKit
         };
         coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 40, HeightRequest = 40 };
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl)) { TargetNullValue = "ic_music_note" });
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl), converter: OnlineUrlToStreamImageConverter.Instance) { TargetNullValue = "ic_music_note" });
         coverBorder.Content = coverImage;
 
         var titleLabel = new Label { FontSize = 14, FontFamily = "OpenSansSemibold", MaxLines = 1 };
@@ -194,7 +196,7 @@ public static class NeteaseUiKit
         };
         coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var coverImage = new Image { Aspect = Aspect.AspectFill, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlinePlaylist.CoverUrl)) { TargetNullValue = "ic_music_note" });
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlinePlaylist.CoverUrl), converter: OnlineUrlToStreamImageConverter.Instance) { TargetNullValue = "ic_music_note" });
         coverBorder.Content = coverImage;
 
         var nameLabel = new Label
@@ -245,7 +247,7 @@ public static class NeteaseUiKit
         };
         avatarBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var avatarImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 44, HeightRequest = 44 };
-        avatarImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseArtist.PicUrl)) { TargetNullValue = "ic_music_note" });
+        avatarImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseArtist.PicUrl), converter: OnlineUrlToStreamImageConverter.Instance) { TargetNullValue = "ic_music_note" });
         avatarBorder.Content = avatarImage;
 
         var nameLabel = new Label { FontSize = 14, FontFamily = "OpenSansSemibold", MaxLines = 1 };
@@ -291,7 +293,7 @@ public static class NeteaseUiKit
         };
         coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 120, HeightRequest = 120 };
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseAlbum.PicUrl)) { TargetNullValue = "ic_music_note" });
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseAlbum.PicUrl), converter: OnlineUrlToStreamImageConverter.Instance) { TargetNullValue = "ic_music_note" });
         coverBorder.Content = coverImage;
 
         var nameLabel = new Label
@@ -414,6 +416,46 @@ public static class NeteaseUiKit
             => value is Dictionary<string, object> d && d.TryGetValue("Vip", out var v) && v is true;
         public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
             => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// 在线 URL → 内存 Stream 封面（不落盘缓存）。在线歌曲封面下载到内存字节，
+    /// 再用内存字典缓存避免重复下载；进程退出后自动释放，不会在本地堆积缓存文件或产生显示错误。
+    /// </summary>
+    private sealed class OnlineUrlToStreamImageConverter : IValueConverter
+    {
+        public static readonly OnlineUrlToStreamImageConverter Instance = new();
+        private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+        private static readonly ConcurrentDictionary<string, byte[]> _memCache = new();
+        private static readonly ConcurrentDictionary<string, Task<byte[]?>> _inflight = new();
+
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        {
+            var url = value as string;
+            if (string.IsNullOrWhiteSpace(url)) return "ic_music_note";
+            return ImageSource.FromStream(ct => LoadAsync(url, ct));
+        }
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+
+        private static async Task<Stream> LoadAsync(string url, CancellationToken ct)
+        {
+            if (!_memCache.TryGetValue(url, out var bytes))
+            {
+                var task = _inflight.GetOrAdd(url, _ => DownloadAsync(url));
+                try { bytes = await task.ConfigureAwait(false); }
+                finally { _inflight.TryRemove(url, out _); }
+                if (bytes is { Length: > 0 }) _memCache[url] = bytes;
+            }
+            return new MemoryStream(bytes ?? Array.Empty<byte>());
+        }
+
+        private static async Task<byte[]?> DownloadAsync(string url)
+        {
+            try { return await Http.GetByteArrayAsync(url).ConfigureAwait(false); }
+            catch { return null; }
+        }
     }
 }
 
