@@ -244,6 +244,9 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         await LoadLoginStateAsync();
         _ = LoadCategoriesAsync(); // 后台刷新官方分类，不阻塞首屏
         await LoadPlaylistsAsync();
+        // 宿主快捷入口（发现页"私人漫游"卡）点击后置位：打开页面即自动启动 FM 电台
+        if (_plugin.ConsumePendingFm())
+            await LoadPrivateFmAsync();
     }
 
     // ── 分类 ──
