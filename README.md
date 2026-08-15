@@ -2,6 +2,8 @@
 
 猫爪音乐（CatClawMusic）的**网易云音乐音源插件**工程，独立于宿主应用编译与交付。
 
+**仓库地址**：[GitHub](https://github.com/kankejiang/CatClawMusic.Plugins.Netease) ｜ [Gitee](https://gitee.com/kankejiang/CatClawMusic.Plugins.Netease)
+
 基于网易云官方接口（老 web API：匿名优先 + 可选用户 Cookie 增强），覆盖
 搜索（歌曲/歌单/歌手）/ 歌单广场（分类+分页）/ 歌单内歌曲 / 排行榜 /
 歌手与专辑 / 播放直链（音质三档+三级兜底+缓存）/ 歌词 /
