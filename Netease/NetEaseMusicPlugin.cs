@@ -52,6 +52,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
             Subtitle = "随机推荐 · 电台",
             Color1 = "#f953c6",
             Color2 = "#b91d73",
+            SortOrder = 0, // 排在各插件快捷入口最前（并列时按注册顺序，先注册在前）
         },
     };
 
