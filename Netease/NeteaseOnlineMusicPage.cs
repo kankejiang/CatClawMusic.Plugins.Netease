@@ -168,28 +168,28 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(searchModesScroll, 1);
 
         // ── 功能入口（登录后可见：我的歌单 / 推荐歌单）──
-        fmCard = NeteaseUiKit.CreateEntryCard("🎧 私人漫游", "随机推荐", "#667eea", "#764ba2");
+        fmCard = NeteaseUiKit.CreateEntryCard("🎧", "私人漫游", "随机推荐", "#667eea", "#764ba2");
         var fmTap = new TapGestureRecognizer();
         fmTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadPrivateFmCommand));
         fmCard.GestureRecognizers.Add(fmTap);
 
-        dailyCard = NeteaseUiKit.CreateEntryCard("📅 每日推荐", "今天想听什么", "#f7971e", "#ffd200");
+        dailyCard = NeteaseUiKit.CreateEntryCard("📅", "每日推荐", "今天想听什么", "#f7971e", "#ffd200");
         var dailyTap = new TapGestureRecognizer();
         dailyTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadDailyRecommendCommand));
         dailyCard.GestureRecognizers.Add(dailyTap);
 
-        toplistCard = NeteaseUiKit.CreateEntryCard("🔥 排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
+        toplistCard = NeteaseUiKit.CreateEntryCard("🔥", "排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
         var toplistTap = new TapGestureRecognizer();
         toplistTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadToplistsCommand));
         toplistCard.GestureRecognizers.Add(toplistTap);
 
-        myCard = NeteaseUiKit.CreateEntryCard("💛 我的歌单", "创建与收藏", "#11998e", "#38ef7d");
+        myCard = NeteaseUiKit.CreateEntryCard("💛", "我的歌单", "创建与收藏", "#11998e", "#38ef7d");
         myCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
         var myTap = new TapGestureRecognizer();
         myTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadMyPlaylistsCommand));
         myCard.GestureRecognizers.Add(myTap);
 
-        recommendCard = NeteaseUiKit.CreateEntryCard("✨ 推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
+        recommendCard = NeteaseUiKit.CreateEntryCard("✨", "推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
         recommendCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
         var recommendTap = new TapGestureRecognizer();
         recommendTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadRecommendPlaylistsCommand));
@@ -509,6 +509,21 @@ public class NeteaseOnlineMusicPage : ContentPage
             if (_songsGridLayout.Span != listSpan) _songsGridLayout.Span = listSpan;
             if (_artistsGridLayout.Span != listSpan) _artistsGridLayout.Span = listSpan;
         }
+
+        // 入口卡片保持正方形：高度 = 卡片列宽（窄屏两列 / 宽屏五列），超大屏封顶避免过高
+        UpdateEntryCardHeights(w);
+    }
+
+    /// <summary>入口卡片设为正方形：高度 = 卡片列宽（窄屏两列 / 宽屏五列），超大屏封顶避免过高。</summary>
+    private void UpdateEntryCardHeights(double w)
+    {
+        double cardWidth = _isWideLayout
+            ? (w - 32 - 4 * 10) / 5   // 宽屏：5 列，4 个 10px 间距
+            : (w - 32 - 1 * 10) / 2;  // 窄屏：2 列，1 个 10px 间距
+        if (cardWidth <= 0) return;
+        double cardHeight = Math.Min(cardWidth, 150);
+        foreach (var card in new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard })
+            card.HeightRequest = cardHeight;
     }
 
     /// <summary>宽屏（≥900 或横屏）：搜索行合一、入口卡片一行五列、歌曲/歌手双列通栏。</summary>

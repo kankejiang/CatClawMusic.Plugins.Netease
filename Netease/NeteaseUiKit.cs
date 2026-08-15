@@ -320,14 +320,38 @@ public static class NeteaseUiKit
 
     // ── 入口卡片 ──
 
-    /// <summary>渐变色功能入口卡片（私人漫游/每日推荐/排行榜等）</summary>
-    public static Border CreateEntryCard(string title, string subtitle, string color1, string color2)
+    /// <summary>渐变色方形功能入口卡片（私人漫游/每日推荐/排行榜等）：图标 + 标题 + 副标题，内容垂直居中。</summary>
+    public static Border CreateEntryCard(string icon, string title, string subtitle, string color1, string color2)
     {
-        var titleLabel = new Label { Text = title, FontSize = 15, FontFamily = "OpenSansSemibold", TextColor = Colors.White };
-        var subtitleLabel = new Label { Text = subtitle, FontSize = 11, TextColor = Color.FromArgb("#CCFFFFFF") };
+        var iconLabel = new Label
+        {
+            Text = icon,
+            FontSize = 26,
+            HorizontalTextAlignment = TextAlignment.Center,
+            VerticalOptions = LayoutOptions.Center,
+        };
+        var titleLabel = new Label
+        {
+            Text = title,
+            FontSize = 13,
+            FontFamily = "OpenSansSemibold",
+            TextColor = Colors.White,
+            HorizontalTextAlignment = TextAlignment.Center,
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+        };
+        var subtitleLabel = new Label
+        {
+            Text = subtitle,
+            FontSize = 10,
+            TextColor = Color.FromArgb("#CCFFFFFF"),
+            HorizontalTextAlignment = TextAlignment.Center,
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+        };
         return new Border
         {
-            Padding = new Thickness(14, 12),
+            Padding = new Thickness(6, 4),
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 16 },
             Background = new LinearGradientBrush
@@ -342,8 +366,10 @@ public static class NeteaseUiKit
             },
             Content = new VerticalStackLayout
             {
-                Spacing = 3,
-                Children = { titleLabel, subtitleLabel },
+                Spacing = 2,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Fill,
+                Children = { iconLabel, titleLabel, subtitleLabel },
             },
         };
     }
