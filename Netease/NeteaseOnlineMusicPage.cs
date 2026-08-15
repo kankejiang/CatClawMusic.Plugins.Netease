@@ -45,6 +45,9 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly LinearItemsLayout _songsLinearLayout = new(ItemsLayoutOrientation.Vertical);
     private readonly LinearItemsLayout _artistsLinearLayout = new(ItemsLayoutOrientation.Vertical);
     private bool _isWideLayout;
+    private readonly (Border Card, string Title, string Subtitle)[] _entryCardDefs;
+    private bool _entryCardsCompact;
+    private readonly Grid contentGrid;
 
     public NeteaseOnlineMusicPage(NeteaseOnlineMusicViewModel vm, IServiceProvider services)
     {
@@ -186,6 +189,15 @@ public class NeteaseOnlineMusicPage : ContentPage
         var recommendTap = new TapGestureRecognizer();
         recommendTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadRecommendPlaylistsCommand));
         recommendCard.GestureRecognizers.Add(recommendTap);
+
+        _entryCardDefs = new[]
+        {
+            (fmCard, "🎧 私人漫游", "随机推荐"),
+            (dailyCard, "📅 每日推荐", "今天想听什么"),
+            (toplistCard, "🔥 排行榜", "飙升 · 新歌 · 热歌"),
+            (myCard, "💛 我的歌单", "创建与收藏"),
+            (recommendCard, "✨ 推荐歌单", "每日为你精选"),
+        };
 
         // 入口卡片容器（窄屏两列三行；宽屏一行五列，由 ApplyWideLayout/ApplyNarrowLayout 重排行列归属）
         entryContainer = new Grid
@@ -375,7 +387,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         tipBorder.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.HasTip));
 
         // ── 组装页面 ──
-        var contentGrid = new Grid
+        contentGrid = new Grid
         {
             RowDefinitions = new RowDefinitionCollection
             {
@@ -460,7 +472,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         }
     }
 
-    /// <summary>响应式布局：按可用宽度设置歌单列数、入口卡片行列、搜索行与歌曲/歌手列表列数。</summary>
+    /// <summary>响应式布局：按可用宽度设置歌单列数、入口卡片紧凑度、搜索行与歌曲/歌手列表列数。</summary>
     private void ApplyResponsiveLayout(double w)
     {
         if (w <= 0) return;
@@ -475,12 +487,25 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         if (_playlistsLayout.Span != span) _playlistsLayout.Span = span;
 
-        bool wide = w >= 900;
-        if (wide == _isWideLayout) return;
-        _isWideLayout = wide;
+        // 横屏（宽明显大于高）时压缩入口卡片，释放纵向空间给内容
+        double h = contentGrid.Height;
+        SetEntryCardsCompact(h > 0 && w > h * 1.2);
 
-        if (wide) ApplyWideLayout();
-        else ApplyNarrowLayout();
+        bool wide = w >= 900;
+        if (wide != _isWideLayout)
+        {
+            _isWideLayout = wide;
+            if (wide) ApplyWideLayout();
+            else ApplyNarrowLayout();
+        }
+
+        // 宽屏内歌曲/歌手列表按宽度自适应列数
+        if (wide)
+        {
+            int listSpan = w switch { < 1100 => 2, < 1500 => 3, _ => 4 };
+            if (_songsGridLayout.Span != listSpan) _songsGridLayout.Span = listSpan;
+            if (_artistsGridLayout.Span != listSpan) _artistsGridLayout.Span = listSpan;
+        }
     }
 
     /// <summary>宽屏（≥900）：搜索框与 chips 同行、入口卡片一行五列、歌曲/歌手双列通栏。</summary>
@@ -559,6 +584,39 @@ public class NeteaseOnlineMusicPage : ContentPage
     {
         Grid.SetRow(card, row);
         Grid.SetColumn(card, column);
+    }
+
+    /// <summary>横屏紧凑模式：入口卡片改为标题/副标题同行、缩小内边距与字号，降低卡片高度释放纵向空间。</summary>
+    private void SetEntryCardsCompact(bool compact)
+    {
+        if (compact == _entryCardsCompact) return;
+        _entryCardsCompact = compact;
+        foreach (var (card, title, subtitle) in _entryCardDefs)
+        {
+            card.Padding = compact ? new Thickness(12, 6) : new Thickness(14, 12);
+            var titleLabel = new Label
+            {
+                Text = title,
+                FontSize = compact ? 13 : 15,
+                FontFamily = "OpenSansSemibold",
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                MaxLines = 1,
+                LineBreakMode = LineBreakMode.TailTruncation,
+            };
+            var subtitleLabel = new Label
+            {
+                Text = subtitle,
+                FontSize = compact ? 10 : 11,
+                TextColor = Color.FromArgb("#CCFFFFFF"),
+                VerticalOptions = LayoutOptions.Center,
+                MaxLines = 1,
+                LineBreakMode = LineBreakMode.TailTruncation,
+            };
+            card.Content = compact
+                ? new HorizontalStackLayout { Spacing = 8, Children = { titleLabel, subtitleLabel } }
+                : new VerticalStackLayout { Spacing = 3, Children = { titleLabel, subtitleLabel } };
+        }
     }
 
     private async void OnPlaylistSelected(object? sender, SelectionChangedEventArgs e)
