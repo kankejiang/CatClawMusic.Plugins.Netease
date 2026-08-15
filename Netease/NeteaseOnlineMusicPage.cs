@@ -510,16 +510,20 @@ public class NeteaseOnlineMusicPage : ContentPage
             if (_artistsGridLayout.Span != listSpan) _artistsGridLayout.Span = listSpan;
         }
 
-        // 入口卡片保持正方形：高度 = 卡片列宽（窄屏两列 / 宽屏五列），超大屏封顶避免过高
+        // 横屏/宽屏入口卡片保持正方形（高度 = 列宽）；竖屏窄屏保持内容自适应高度，避免卡片过大
         UpdateEntryCardHeights(w);
     }
 
-    /// <summary>入口卡片设为正方形：高度 = 卡片列宽（窄屏两列 / 宽屏五列），超大屏封顶避免过高。</summary>
+    /// <summary>入口卡片：横屏/宽屏设为正方形（高度 = 卡片列宽，超大屏封顶）；竖屏窄屏恢复内容自适应高度。</summary>
     private void UpdateEntryCardHeights(double w)
     {
-        double cardWidth = _isWideLayout
-            ? (w - 32 - 4 * 10) / 5   // 宽屏：5 列，4 个 10px 间距
-            : (w - 32 - 1 * 10) / 2;  // 窄屏：2 列，1 个 10px 间距
+        if (!_isWideLayout)
+        {
+            foreach (var card in new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard })
+                card.HeightRequest = -1; // 恢复 Auto
+            return;
+        }
+        double cardWidth = (w - 32 - 4 * 10) / 5; // 宽屏：5 列，4 个 10px 间距
         if (cardWidth <= 0) return;
         double cardHeight = Math.Min(cardWidth, 150);
         foreach (var card in new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard })
