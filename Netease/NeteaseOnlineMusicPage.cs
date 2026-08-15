@@ -510,24 +510,60 @@ public class NeteaseOnlineMusicPage : ContentPage
             if (_artistsGridLayout.Span != listSpan) _artistsGridLayout.Span = listSpan;
         }
 
-        // 横屏/宽屏入口卡片保持正方形（高度 = 列宽）；竖屏窄屏保持内容自适应高度，避免卡片过大
+        // 入口卡片：横屏/宽屏正方形（高度 = 列宽）；竖屏窄屏为横屏卡片的四分之一高度（紧凑单行）
         UpdateEntryCardHeights(w);
     }
 
-    /// <summary>入口卡片：横屏/宽屏设为正方形（高度 = 卡片列宽，超大屏封顶）；竖屏窄屏恢复内容自适应高度。</summary>
+    /// <summary>入口卡片尺寸与布局：横屏/宽屏正方形（高度 = 列宽，超大屏封顶）；竖屏窄屏高度 = 横屏卡片四分之一。</summary>
     private void UpdateEntryCardHeights(double w)
     {
+        var cards = new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard };
         if (!_isWideLayout)
         {
-            foreach (var card in new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard })
-                card.HeightRequest = -1; // 恢复 Auto
+            // 竖屏窄屏：横屏卡片高度（按估算横屏宽度 2w 计算）的四分之一，约 32-37px，最小 35px
+            double landscapeCard = Math.Min((2 * w - 72) / 5, 150);
+            double h = Math.Max(landscapeCard / 4, 35);
+            foreach (var card in cards)
+            {
+                card.HeightRequest = h;
+                ApplyCompactEntryLayout(card);
+            }
             return;
         }
         double cardWidth = (w - 32 - 4 * 10) / 5; // 宽屏：5 列，4 个 10px 间距
         if (cardWidth <= 0) return;
         double cardHeight = Math.Min(cardWidth, 150);
-        foreach (var card in new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard })
+        foreach (var card in cards)
+        {
             card.HeightRequest = cardHeight;
+            ApplySquareEntryLayout(card);
+        }
+    }
+
+    /// <summary>竖屏窄屏：入口卡片切换为单行「图标 + 标题」，副标题隐藏。</summary>
+    private static void ApplyCompactEntryLayout(Border card)
+    {
+        if (card is not NeteaseUiKit.EntryCard entry || entry.Layout is not { } l) return;
+        l.IconLabel.FontSize = 18;
+        l.TitleLabel.FontSize = 12;
+        l.SubtitleLabel.IsVisible = false;
+        card.Content = new HorizontalStackLayout
+        {
+            Spacing = 6,
+            HorizontalOptions = LayoutOptions.Center,
+            VerticalOptions = LayoutOptions.Center,
+            Children = { l.IconLabel, l.TitleLabel },
+        };
+    }
+
+    /// <summary>横屏/宽屏：入口卡片恢复正方形垂直布局（图标 + 标题 + 副标题）。</summary>
+    private static void ApplySquareEntryLayout(Border card)
+    {
+        if (card is not NeteaseUiKit.EntryCard entry || entry.Layout is not { } l) return;
+        l.IconLabel.FontSize = 26;
+        l.TitleLabel.FontSize = 13;
+        l.SubtitleLabel.IsVisible = true;
+        card.Content = l.Stack;
     }
 
     /// <summary>宽屏（≥900 或横屏）：搜索行合一、入口卡片一行五列、歌曲/歌手双列通栏。</summary>
