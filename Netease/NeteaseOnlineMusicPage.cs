@@ -544,25 +544,35 @@ public class NeteaseOnlineMusicPage : ContentPage
     private static void ApplyCompactEntryLayout(Border card)
     {
         if (card is not NeteaseUiKit.EntryCard entry || entry.Layout is not { } l) return;
+        if (card.Content is HorizontalStackLayout) return; // 已是单行布局
+        l.Stack.Children.Clear(); // 先从旧布局移除，避免 child already has a parent
         l.IconLabel.FontSize = 18;
         l.TitleLabel.FontSize = 12;
         l.SubtitleLabel.IsVisible = false;
-        card.Content = new HorizontalStackLayout
+        var compact = new HorizontalStackLayout
         {
             Spacing = 6,
             HorizontalOptions = LayoutOptions.Center,
             VerticalOptions = LayoutOptions.Center,
-            Children = { l.IconLabel, l.TitleLabel },
         };
+        compact.Children.Add(l.IconLabel);
+        compact.Children.Add(l.TitleLabel);
+        card.Content = compact;
     }
 
     /// <summary>横屏/宽屏：入口卡片恢复正方形垂直布局（图标 + 标题 + 副标题）。</summary>
     private static void ApplySquareEntryLayout(Border card)
     {
         if (card is not NeteaseUiKit.EntryCard entry || entry.Layout is not { } l) return;
+        if (ReferenceEquals(card.Content, l.Stack)) return; // 已是垂直布局
+        if (card.Content is HorizontalStackLayout compact)
+            compact.Children.Clear(); // 先从单行布局移除，避免 child already has a parent
         l.IconLabel.FontSize = 26;
         l.TitleLabel.FontSize = 13;
         l.SubtitleLabel.IsVisible = true;
+        l.Stack.Children.Add(l.IconLabel);
+        l.Stack.Children.Add(l.TitleLabel);
+        l.Stack.Children.Add(l.SubtitleLabel);
         card.Content = l.Stack;
     }
 
