@@ -320,8 +320,23 @@ public static class NeteaseUiKit
 
     // ── 入口卡片 ──
 
-    /// <summary>渐变色方形功能入口卡片（私人漫游/每日推荐/排行榜等）：图标 + 标题 + 副标题，内容垂直居中。</summary>
-    public static Border CreateEntryCard(string icon, string title, string subtitle, string color1, string color2)
+    /// <summary>入口卡片内部布局引用（横屏正方形 / 竖屏紧凑单行切换用）。</summary>
+    public class EntryCardLayout
+    {
+        public required Label IconLabel { get; init; }
+        public required Label TitleLabel { get; init; }
+        public required Label SubtitleLabel { get; init; }
+        public required VerticalStackLayout Stack { get; init; }
+    }
+
+    /// <summary>入口卡片（Border 子类，携带布局引用以便横竖屏切换）。</summary>
+    public class EntryCard : Border
+    {
+        public EntryCardLayout? Layout { get; set; }
+    }
+
+    /// <summary>渐变色功能入口卡片（私人漫游/每日推荐/排行榜等）：图标 + 标题 + 副标题，内容垂直居中。</summary>
+    public static EntryCard CreateEntryCard(string icon, string title, string subtitle, string color1, string color2)
     {
         var iconLabel = new Label
         {
@@ -337,6 +352,7 @@ public static class NeteaseUiKit
             FontFamily = "OpenSansSemibold",
             TextColor = Colors.White,
             HorizontalTextAlignment = TextAlignment.Center,
+            VerticalOptions = LayoutOptions.Center,
             MaxLines = 1,
             LineBreakMode = LineBreakMode.TailTruncation,
         };
@@ -349,7 +365,14 @@ public static class NeteaseUiKit
             MaxLines = 1,
             LineBreakMode = LineBreakMode.TailTruncation,
         };
-        return new Border
+        var stack = new VerticalStackLayout
+        {
+            Spacing = 2,
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Fill,
+            Children = { iconLabel, titleLabel, subtitleLabel },
+        };
+        var card = new EntryCard
         {
             Padding = new Thickness(6, 4),
             StrokeThickness = 0,
@@ -364,14 +387,10 @@ public static class NeteaseUiKit
                     new GradientStop { Color = Color.FromArgb(color2), Offset = 1 },
                 },
             },
-            Content = new VerticalStackLayout
-            {
-                Spacing = 2,
-                VerticalOptions = LayoutOptions.Center,
-                HorizontalOptions = LayoutOptions.Fill,
-                Children = { iconLabel, titleLabel, subtitleLabel },
-            },
+            Content = stack,
         };
+        card.Layout = new EntryCardLayout { IconLabel = iconLabel, TitleLabel = titleLabel, SubtitleLabel = subtitleLabel, Stack = stack };
+        return card;
     }
 
     // ── 分类 chip ──
