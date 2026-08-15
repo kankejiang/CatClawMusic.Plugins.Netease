@@ -14,12 +14,15 @@ namespace CatClawMusic.Plugins.Netease;
 /// 由插件自治提供 UI 和业务逻辑。
 /// </para>
 /// </summary>
-public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, ILyricsProviderPlugin
+public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, ILyricsProviderPlugin, IQuickEntryPlugin
 {
     private readonly NeteaseOpenApiClient _client = new();
 
     /// <summary>整页 VM 插件级单例（FM 电台常驻，页面开关不影响电台与补货）</summary>
     private static NeteaseOnlineMusicViewModel? _sharedVm;
+
+    /// <summary>宿主快捷入口点击后置位：下次打开入口页面时自动启动私人漫游</summary>
+    private volatile bool _pendingFm;
 
     /// <summary>音质档位持久化文件</summary>
     private static readonly string QualityFilePath =
@@ -35,6 +38,36 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     /// <summary>当前音质档位（0=标准 128k，1=高品 320k，2=无损 FLAC；登录增强）</summary>
     public int QualityLevel { get; private set; } = 1;
+
+    // ── IQuickEntryPlugin：宿主发现页 HeroTrack 快捷入口（通用机制，任何插件可注册）──
+
+    /// <summary>注册的快捷入口卡片（当前：私人漫游 → 打开入口页后自动启动 FM 电台）</summary>
+    public IReadOnlyList<QuickEntryInfo> QuickEntries => new[]
+    {
+        new QuickEntryInfo
+        {
+            Id = "fm",
+            Title = "私人漫游",
+            Icon = "🎧",
+            Subtitle = "随机推荐 · 电台",
+            Color1 = "#f953c6",
+            Color2 = "#b91d73",
+        },
+    };
+
+    /// <summary>执行快捷入口动作：置位"打开页面后自动启动 FM"，由入口页面 OnAppearing 消费</summary>
+    public void ExecuteQuickEntry(string entryId)
+    {
+        if (entryId == "fm") _pendingFm = true;
+    }
+
+    /// <summary>取出并清除"待启动 FM"标记（入口页面出现时调用）</summary>
+    public bool ConsumePendingFm()
+    {
+        if (!_pendingFm) return false;
+        _pendingFm = false;
+        return true;
+    }
 
     /// <summary>设置音质档位并持久化（宿主/插件 UI 共用一份状态）</summary>
     public void SetQualityLevel(int level)
