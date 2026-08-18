@@ -625,7 +625,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     private async Task PlayFromAsync(OnlineSong? startSong)
     {
-        if (startSong == null) return;
+        if (startSong == null) { ShowTip("播放列表为空"); return; }
         // FM 列表内的歌曲（带 FromFm 标记）切歌 → 继续电台；非 FM 列表的歌（歌单/搜索/排行/每日推荐）→ 退出电台正常播放。
         // 关键：浏览列表（打开歌单/搜索）不退出电台（LeaveFmMode 只在真正播放非电台歌时触发，
         // 否则点开歌单看一眼电台就被杀，播放模式变回列表循环）。
@@ -638,35 +638,42 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         }
         LeaveFmMode();
         var list = Songs.ToList();
-        if (list.Count == 0) return;
+        if (list.Count == 0) { ShowTip("播放列表为空"); return; }
 
-        var temp = new List<Song>();
-        var failedTitles = new List<string>();
-        foreach (var s in list)
-        {
-            string? url = null;
-            try { url = await _plugin.GetPlayUrlAsync(s, QualityLevel); } catch { }
-            if (string.IsNullOrWhiteSpace(url)) { failedTitles.Add(s.Title); continue; }
-            temp.Add(NeteasePlaybackHelper.ToQueueSong(s, url));
-        }
-        if (temp.Count == 0)
+        // 先解析第一首立即播放，其余后台逐首解析入队（避免几十首歌逐首取链才播第一首）
+        string? firstUrl = null;
+        try { firstUrl = await _plugin.GetPlayUrlAsync(startSong, QualityLevel); } catch { }
+        if (string.IsNullOrWhiteSpace(firstUrl))
         {
             ShowTip($"《{startSong.Title}》暂时无法播放（可能是 VIP 歌曲）");
             return;
         }
-
-        _queue.SetSongs(temp);
-        var target = temp.FirstOrDefault(s => s.RemoteId == $"{startSong.Platform}:{startSong.Id}") ?? temp[0];
-        _queue.SelectSong(target.Id);
-        try { await _audioPlayer.PlayAsync(target.FilePath); }
+        var firstSong = NeteasePlaybackHelper.ToQueueSong(startSong, firstUrl);
+        _queue.SetSongs(new List<Song> { firstSong });
+        _queue.SelectSong(firstSong.Id);
+        try { await _audioPlayer.PlayAsync(firstSong.FilePath); }
         catch { ShowTip("播放失败，请重试"); }
 
-        if (failedTitles.Count > 0)
+        // 后台解析剩余歌曲并追加到队列
+        _ = Task.Run(async () =>
         {
-            ShowTip(failedTitles.Contains(startSong.Title)
-                ? $"《{startSong.Title}》无法播放（可能是 VIP 歌曲），已跳过 {failedTitles.Count} 首"
-                : $"{failedTitles.Count} 首无法播放已跳过");
-        }
+            var rest = new List<Song>();
+            foreach (var s in list)
+            {
+                if (s.Id == startSong.Id) continue;
+                string? url = null;
+                try { url = await _plugin.GetPlayUrlAsync(s, QualityLevel); } catch { }
+                if (string.IsNullOrWhiteSpace(url)) continue;
+                rest.Add(NeteasePlaybackHelper.ToQueueSong(s, url));
+            }
+            if (rest.Count > 0)
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    foreach (var r in rest) _queue.AddToEnd(r);
+                });
+            }
+        });
     }
 
     // ── 私人漫游（FM）无限电台 ──

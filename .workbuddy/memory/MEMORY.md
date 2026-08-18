@@ -1,8 +1,9 @@
 # 项目长期记忆：CatClawMusic.Plugins.Netease
 
 ## 工作流约定（用户明确要求）
-- **改完插件直接发布 .ccp**：每次插件代码改动完成后，编译 Release 产出 `bin/Release/net10.0/CatClawMusic.Plugins.Netease.ccp`，提交源码并打 GitHub Release（标签递增），把 .ccp 作为 Release asset 上传，方便用户「插件管理 → ＋ 添加 → 网络安装」联网下载。
-- **版本号规则（用户明确）**：默认只加补丁位 **+0.0.1**（如 v0.1.0 → v0.1.1 → v0.1.2）；**只有发布“完整版本”时才动 minor/major**。禁止无谓地跳 minor/major（例如不要把普通改动发成 v0.2.0）。
+- **每次修改完插件代码都发布插件新版本（用户重申）**：插件代码有任何改动，编译 Release 产出 `bin/Release/net10.0/CatClawMusic.Plugins.Netease.ccp`，提交源码并打 GitHub Release（标签递增），把 .ccp 作为 Release asset 上传，方便用户「插件管理 → ＋ 添加 → 网络安装」联网下载。**不留攒批，改完即发。**
+- **宿主代码改动 ≠ 插件发布**：若修复落在宿主仓库（如 WebViewLoginPage），插件 .ccp 不重发，随宿主主程序版本（v1.8.x）发布。
+- **版本号规则（用户明确）**：默认只加补丁位 **+0.0.1**（如 v0.3.5 → v0.3.6）；**只有发布“完整版本”时才动 minor/major**。禁止无谓地跳 minor/major（例如不要把普通改动发成 v0.4.0）。
 - .ccp 被 .gitignore 忽略（bin/），**不要**把 .ccp 提交进仓库，只作 Release 附件；源码改动正常提交推送。
 - **不要**把 `.workbuddy/` 目录提交进仓库（项目数据，非源码）。
 - 发布命令（已验证可用）：`dotnet build -c Release` → `git add <改动的源码>` → commit → `git push origin main` → `gh release create vX.Y.Z --generate-notes -R kankejiang/CatClawMusic.Plugins.Netease bin/Release/net10.0/CatClawMusic.Plugins.Netease.ccp`。
