@@ -21,15 +21,23 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>整页 VM 插件级单例（FM 电台常驻，页面开关不影响电台与补货）</summary>
     private static NeteaseOnlineMusicViewModel? _sharedVm;
 
-    // ── 私人漫游推荐模式（DEFAULT→FAMILIAR→EXPLORE 循环切换）──
-    private static readonly string[] FmModeCodes = { "DEFAULT", "FAMILIAR", "EXPLORE" };
+    // ── 私人漫游推荐模式（DEFAULT/FAMILIAR/EXPLORE + 36 场景模式）──
     private static readonly Dictionary<string, string> FmModeLabels = new()
     {
-        ["DEFAULT"] = "默认模式",
-        ["FAMILIAR"] = "熟悉模式",
-        ["EXPLORE"] = "探索模式",
+        ["DEFAULT"] = "默认模式", ["FAMILIAR"] = "熟悉模式", ["EXPLORE"] = "探索模式",
+        // 场景模式（全部经 /api/v1/radio/get?mode=CODE 验证可用）
+        ["LATE_NIGHT_EMO"] = "伤感", ["EXERCISE"] = "运动", ["SLEEP_HELP"] = "助眠", ["RELAX"] = "放松",
+        ["HAPPINESS"] = "欢快", ["LYRICAL"] = "抒情", ["CURE"] = "治愈", ["FOCUS"] = "专注",
+        ["ROMANTIC"] = "情歌", ["RHYTHM_BLUES"] = "R&B", ["RAINY"] = "下雨天", ["GAMES"] = "打游戏",
+        ["RAP"] = "说唱", ["K_POP"] = "K-Pop", ["ORIGINAL_MUSICIAL"] = "宝藏原创", ["ELECTRONIC"] = "电音",
+        ["COMMUTE"] = "出行", ["BATH"] = "洗澡", ["COFFEE_SHOP"] = "咖啡馆", ["ROCK"] = "摇滚",
+        ["INSPIRATIONAL"] = "励志", ["CHINESE"] = "华语", ["EUROPE_AMERICA"] = "欧美", ["CANTONESE"] = "粤语",
+        ["DJ"] = "慢摇DJ", ["CLASSIC"] = "经典", ["LIGHT_MUSIC"] = "轻音乐", ["CHINESE_STYLE"] = "国风",
+        ["FOLK"] = "民谣", ["ACG"] = "二次元", ["CLASSICAL"] = "古典", ["JAZZ"] = "爵士",
+        ["JAPANESE"] = "日语", ["WORLD"] = "全球", ["FRENCH"] = "法语", ["BLUES"] = "蓝调",
     };
-    /// <summary>当前 FM 推荐模式 code（DEFAULT/FAMILIAR/EXPLORE）；GetPrivateFmAsync 传给 API</summary>
+
+    /// <summary>当前 FM 推荐模式 code（DEFAULT/FAMILIAR/EXPLORE 或场景码）；GetPrivateFmAsync 传给 API</summary>
     private string _currentFmMode = "DEFAULT";
 
     /// <summary>音质档位持久化文件</summary>
@@ -39,7 +47,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.2";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.3";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
@@ -309,15 +317,43 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<bool> FmLikeAsync(string songId, bool like)
         => _client.FmLikeAsync(songId, like);
 
-    /// <summary>循环切换 FM 推荐模式并重新加载电台；返回新模式显示名</summary>
-    public async Task<string?> TrySwitchFmModeAsync()
+    /// <summary>返回私人漫游可用的推荐模式 + 场景模式列表（供宿主渲染抽屉）</summary>
+    public Task<List<FmModeCategory>> GetFmModesAsync()
     {
-        var idx = Array.IndexOf(FmModeCodes, _currentFmMode);
-        _currentFmMode = FmModeCodes[(idx + 1) % FmModeCodes.Length];
-        // 已有 VM（FM 正在播放）→ 立即重新加载新模式歌曲
+        var list = new List<FmModeCategory>();
+        // 推荐模式（3 种）
+        list.Add(new FmModeCategory { Type = "mode", Code = "DEFAULT", Title = "默认模式", SubTitle = "沿着目前喜好继续聆听", Icon = "🎵" });
+        list.Add(new FmModeCategory { Type = "mode", Code = "FAMILIAR", Title = "熟悉模式", SubTitle = "喜欢过的歌曲与相似推荐", Icon = "❤️" });
+        list.Add(new FmModeCategory { Type = "mode", Code = "EXPLORE", Title = "探索模式", SubTitle = "多元曲风与小众佳作", Icon = "🧭" });
+        // 场景模式（36 种，4 列 9 行）
+        var sceneCodes = new[]
+        {
+            "LATE_NIGHT_EMO", "EXERCISE", "SLEEP_HELP", "RELAX",
+            "HAPPINESS", "LYRICAL", "CURE", "FOCUS",
+            "ROMANTIC", "RHYTHM_BLUES", "RAINY", "GAMES",
+            "RAP", "K_POP", "ORIGINAL_MUSICIAL", "ELECTRONIC",
+            "COMMUTE", "BATH", "COFFEE_SHOP", "ROCK",
+            "INSPIRATIONAL", "CHINESE", "EUROPE_AMERICA", "CANTONESE",
+            "DJ", "CLASSIC", "LIGHT_MUSIC", "CHINESE_STYLE",
+            "FOLK", "ACG", "CLASSICAL", "JAZZ",
+            "JAPANESE", "WORLD", "FRENCH", "BLUES",
+        };
+        foreach (var code in sceneCodes)
+        {
+            if (FmModeLabels.TryGetValue(code, out var title))
+                list.Add(new FmModeCategory { Type = "scene", Code = code, Title = title });
+        }
+        return Task.FromResult(list);
+    }
+
+    /// <summary>切换到指定推荐模式/场景模式并重新加载电台；返回新模式显示名</summary>
+    public async Task<string?> TrySetFmModeAsync(string modeCode)
+    {
+        if (!FmModeLabels.ContainsKey(modeCode)) return null;
+        _currentFmMode = modeCode;
         if (_sharedVm != null)
             await _sharedVm.LoadPrivateFmAsync();
-        return FmModeLabels.TryGetValue(_currentFmMode, out var label) ? label : _currentFmMode;
+        return FmModeLabels[modeCode];
     }
 
     /// <summary>当前 FM 推荐模式显示名；不在 FM 模式返回 null</summary>
