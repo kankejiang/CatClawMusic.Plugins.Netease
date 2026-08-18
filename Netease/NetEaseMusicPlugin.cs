@@ -21,6 +21,17 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>整页 VM 插件级单例（FM 电台常驻，页面开关不影响电台与补货）</summary>
     private static NeteaseOnlineMusicViewModel? _sharedVm;
 
+    // ── 私人漫游推荐模式（DEFAULT→FAMILIAR→EXPLORE 循环切换）──
+    private static readonly string[] FmModeCodes = { "DEFAULT", "FAMILIAR", "EXPLORE" };
+    private static readonly Dictionary<string, string> FmModeLabels = new()
+    {
+        ["DEFAULT"] = "默认模式",
+        ["FAMILIAR"] = "熟悉模式",
+        ["EXPLORE"] = "探索模式",
+    };
+    /// <summary>当前 FM 推荐模式 code（DEFAULT/FAMILIAR/EXPLORE）；GetPrivateFmAsync 传给 API</summary>
+    private string _currentFmMode = "DEFAULT";
+
     /// <summary>音质档位持久化文件</summary>
     private static readonly string QualityFilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -28,7 +39,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.1";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.2";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
@@ -238,7 +249,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     /// <summary>私人漫游（随机推荐）</summary>
     public Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10)
-        => _client.GetPrivateFmAsync(num);
+        => _client.GetPrivateFmAsync(num, _currentFmMode);
 
     /// <summary>每日推荐歌曲</summary>
     public Task<List<OnlineSong>?> GetDailyRecommendAsync(int num = 20)
@@ -297,6 +308,24 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>私人漫游歌曲红心（需登录）</summary>
     public Task<bool> FmLikeAsync(string songId, bool like)
         => _client.FmLikeAsync(songId, like);
+
+    /// <summary>循环切换 FM 推荐模式并重新加载电台；返回新模式显示名</summary>
+    public async Task<string?> TrySwitchFmModeAsync()
+    {
+        var idx = Array.IndexOf(FmModeCodes, _currentFmMode);
+        _currentFmMode = FmModeCodes[(idx + 1) % FmModeCodes.Length];
+        // 已有 VM（FM 正在播放）→ 立即重新加载新模式歌曲
+        if (_sharedVm != null)
+            await _sharedVm.LoadPrivateFmAsync();
+        return FmModeLabels.TryGetValue(_currentFmMode, out var label) ? label : _currentFmMode;
+    }
+
+    /// <summary>当前 FM 推荐模式显示名；不在 FM 模式返回 null</summary>
+    public Task<string?> GetFmModeLabelAsync()
+    {
+        if (_sharedVm?.IsFmMode != true) return Task.FromResult<string?>(null);
+        return Task.FromResult<string?>(FmModeLabels.TryGetValue(_currentFmMode, out var label) ? label : _currentFmMode);
+    }
 
     /// <summary>私人漫游垃圾桶（需登录）</summary>
     public Task<bool> FmTrashAsync(string songId)

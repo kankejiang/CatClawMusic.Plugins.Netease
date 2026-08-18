@@ -444,7 +444,8 @@ public class NeteaseOpenApiClient
     /// 该接口一次通常只返回 1 首（网易云私人 FM 模型），故循环拉取并去重，
     /// 直到凑齐 <paramref name="num"/> 首或达到安全上限，模拟官方"无限电台"的首批缓冲。
     /// </summary>
-    public async Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10)
+    /// <param name="mode">推荐模式（DEFAULT/FAMILIAR/EXPLORE 或场景 code 如 ROCK）；空或 DEFAULT = 默认</param>
+    public async Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10, string? mode = null)
     {
         try
         {
@@ -452,10 +453,14 @@ public class NeteaseOpenApiClient
             var seen = new HashSet<string>(StringComparer.Ordinal);
             int attempts = 0;
             int maxAttempts = num * 3; // 安全上限，避免接口异常时死循环
+            // mode 参数：DEFAULT 或空不带 query（保持原生行为），其他拼到 URL
+            var urlBase = "https://music.163.com/api/v1/radio/get";
+            var query = string.IsNullOrWhiteSpace(mode) || mode == "DEFAULT"
+                ? "" : $"?mode={Uri.EscapeDataString(mode)}";
             while (collected.Count < num && attempts < maxAttempts)
             {
                 attempts++;
-                using var doc = await GetJsonAsync("https://music.163.com/api/v1/radio/get");
+                using var doc = await GetJsonAsync(urlBase + query);
                 if (doc == null || !doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
                     break;
             foreach (var s in data.EnumerateArray())
