@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>桌面端底部播放器原型 · CatClaw Music</title>
+<style>
+  :root{
+    --bg:#F5F5F7;
+    --bg-2:#FFFFFF;
+    --line:rgba(0,0,0,.06);
+    --text:#2A2A2A;
+    --text-2:#6A6A6F;
+    --hint:#9C9CA1;
+    --red:#E72D2C;
+    --red-soft:#FF5C5B;
+    --shadow:0 1px 0 rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.06);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:#E8E8EC;font:14px/1.4 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--text);}
+  .stage{padding:24px;display:flex;flex-direction:column;gap:18px;align-items:flex-start;}
+  h1{font-size:13px;font-weight:500;color:var(--text-2);letter-spacing:.5px;}
+  h1 small{color:var(--hint);margin-left:8px;font-weight:400;}
+
+  /* ── 播放器器条 ── */
+  .player{
+    width:1280px;height:80px;
+    background:var(--bg);
+    border:1px solid var(--line);
+    border-radius:8px;
+    box-shadow:var(--shadow);
+    display:grid;
+    grid-template-columns:300px auto 1fr auto;
+    align-items:center;
+    padding:0 24px;
+    gap:24px;
+  }
+
+  /* ── 左侧：封面 + 歌名/歌手 ── */
+  .info{display:flex;align-items:center;gap:14px;min-width:0;}
+  .cover{
+    width:56px;height:56px;border-radius:50%;
+    background:linear-gradient(135deg,#3a3a3a 0%,#1a1a1a 100%);
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.05), 0 0 0 1px rgba(0,0,0,.4);
+    position:relative;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;
+    color:#4a4a4a;font-size:20px;overflow:hidden;
+  }
+  .cover::after{
+    content:"";position:absolute;inset:8px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%,#3a4a5a,#1a2025);
+  }
+  .cover span{position:relative;z-index:1;color:#5a6a7a;}
+
+  .meta{min-width:0;line-height:1.25;}
+  .title{display:flex;align-items:center;gap:8px;font-weight:500;font-size:14px;color:var(--text);}
+  .vip{
+    display:inline-block;background:var(--red);color:#fff;
+    font-size:10px;line-height:1;padding:2px 5px;border-radius:3px;
+    font-weight:600;letter-spacing:.5px;
+  }
+  .artist{font-size:12px;color:var(--text-2);margin-top:4px;}
+
+  /* ── 中左：喜欢 + 评论数 ── */
+  .engage{display:flex;align-items:center;gap:14px;}
+  .like-cta{display:flex;align-items:center;gap:6px;color:var(--red);cursor:pointer;}
+  .like-cta svg{width:22px;height:22px;fill:var(--red);}
+  .like-cta .count{font-size:12px;color:var(--text-2);}
+  .like-cta.liked .count{color:var(--red);}
+
+  /* ── 中央：控制组 ── */
+  .controls{display:flex;align-items:center;gap:18px;justify-content:center;}
+  .ctrl{
+    background:transparent;border:0;padding:0;cursor:pointer;
+    color:var(--text-2);display:flex;align-items:center;justify-content:center;
+    border-radius:6px;width:36px;height:36px;transition:color .15s,background .15s;
+  }
+  .ctrl:hover{color:var(--text);background:rgba(0,0,0,.04);}
+  .ctrl svg{width:22px;height:22px;}
+  .ctrl.play{
+    width:50px;height:50px;background:var(--red);color:#fff;border-radius:50%;
+    box-shadow:0 4px 12px rgba(231,45,44,.35);
+  }
+  .ctrl.play:hover{background:var(--red-soft);}
+  .ctrl.play svg{width:22px;height:22px;fill:#fff;}
+
+  /* ── 中右：进度条（可选，原图没显示，留薄薄一条表示） ── */
+  .progress-area{
+    grid-column:1 / -1;
+    margin:0 -24px -8px;
+    padding:0 24px 0;
+    position:relative;height:14px;
+  }
+  .progress-track{height:2px;background:var(--line);border-radius:1px;position:relative;top:6px;}
+  .progress-fill{position:absolute;left:0;top:0;height:100%;width:32%;background:var(--text);border-radius:1px;}
+  .progress-thumb{position:absolute;left:32%;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:none;}
+
+  /* ── 右侧：歌词 + 音量（hover 弹出音量条） + 更多 ── */
+  .tools{display:flex;align-items:center;gap:14px;color:var(--text-2);}
+  .tools .ctrl{width:32px;height:32px;}
+  .tools svg{width:20px;height:20px;}
+  .time{font-size:12px;font-variant-numeric:tabular-nums;min-width:48px;text-align:right;color:var(--text-2);}
+
+  /* 音量按钮 + 悬停弹层 */
+  .volume-wrap{position:relative;display:flex;}
+  .volume-pop{
+    position:absolute;left:50%;bottom:calc(100% + 12px);
+    transform:translateX(-50%) translateY(8px);
+    width:96px;height:148px;
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 6px 24px rgba(0,0,0,.12);
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+    padding:14px 0 10px;
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity .15s ease, transform .15s ease, visibility .15s;
+    z-index:20;
+  }
+  .volume-wrap:hover .volume-pop,
+  .volume-wrap:focus-within .volume-pop{
+    opacity:1;visibility:visible;pointer-events:auto;transform:translateX(-50%) translateY(0);
+  }
+  .volume-pop .v-icon{width:18px;height:18px;color:var(--text-2);}
+  .v-track{
+    position:relative;width:5px;flex:1;min-height:64px;
+    background:#E6E6EA;border-radius:3px;cursor:pointer;
+  }
+  .v-fill{
+    position:absolute;left:0;right:0;bottom:0;height:60%;
+    background:var(--red);border-radius:3px;
+  }
+  .v-thumb{
+    position:absolute;left:50%;bottom:60%;transform:translate(-50%,50%);
+    width:13px;height:13px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.35);
+  }
+  .volume-pop .v-pct{font-size:11px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+
+  /* ── 注释 ── */
+  .notes{
+    background:#fff;border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;width:1280px;color:var(--text-2);font-size:12px;line-height:1.7;
+  }
+  .notes b{color:var(--text);}
+  .notes code{background:#F0F0F3;padding:1px 5px;border-radius:3px;font-size:11px;color:#444;}
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <h1>桌面端底部播放器原型 <small>参照网易云 PC 客户端布局 · 高度 80px · 4 列 Grid</small></h1>
+
+  <!-- 播放器条 -->
+  <div class="player">
+
+    <!-- ① 左侧：封面 + 歌名/歌手 -->
+    <div class="info">
+      <div class="cover"><span>♬</span></div>
+      <div class="meta">
+        <div class="title">Peter Pan Was Right <span class="vip">VIP</span></div>
+        <div class="artist">Anson Seabra</div>
+      </div>
+    </div>
+
+    <!-- ② 中左：喜欢 + 评论数（独立互动区） -->
+    <div class="engage">
+      <div class="like-cta liked" title="喜欢">
+        <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9.2C.8 8.2 2.5 4 6.3 4c2 0 3.5 1.2 4.7 2.7C12.2 5.2 13.7 4 15.7 4c3.8 0 5.5 4.2 3.8 7.8C19 16.5 12 21 12 21z"/></svg>
+        <span class="count">1w</span>
+      </div>
+    </div>
+
+    <!-- ③ 中央：控制组 -->
+    <div class="controls">
+      <button class="ctrl" title="心动模式">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-7-4.5-9.5-9.2C.8 8.2 2.5 4 6.3 4c2 0 3.5 1.2 4.7 2.7C12.2 5.2 13.7 4 15.7 4c3.8 0 5.5 4.2 3.8 7.8C19 16.5 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      </button>
+      <button class="ctrl" title="上一首">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg>
+      </button>
+      <button class="ctrl play" title="播放/暂停">
+        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button class="ctrl" title="下一首">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+      </button>
+      <button class="ctrl" title="播放队列">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm17-9v10l-5-5z"/></svg>
+      </button>
+    </div>
+
+    <!-- ④ 右侧：歌词 + 音量 + 更多（更多先预留，不做功能） -->
+    <div class="tools">
+      <button class="ctrl" title="歌词">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 7h16v2H4zm0 5h12v2H4zm0 5h8v2H4zm13-1.2A2.8 2.8 0 1 0 17 13v5.5z"/></svg>
+      </button>
+      <div class="volume-wrap">
+        <button class="ctrl" title="音量">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2c0-1.8-1-3.3-2.5-4v8c1.5-.7 2.5-2.2 2.5-4z"/></svg>
+        </button>
+        <!-- 悬停弹出的垂直音量条 -->
+        <div class="volume-pop">
+          <svg class="v-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2c0-1.8-1-3.3-2.5-4v8c1.5-.7 2.5-2.2 2.5-4z"/></svg>
+          <div class="v-track">
+            <div class="v-fill"></div>
+            <div class="v-thumb"></div>
+          </div>
+          <span class="v-pct">60%</span>
+        </div>
+      </div>
+      <button class="ctrl" title="更多（预留）">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/></svg>
+      </button>
+    </div>
+
+    <!-- 进度条：底部薄层（原图未显示进度条；这里只放占位，注释说明） -->
+    <div class="progress-area">
+      <div class="progress-track">
+        <div class="progress-fill"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 结构说明 -->
+  <div class="notes">
+    <b>结构（Grid 4 列：300px / auto / 1fr / auto）</b><br>
+    ① <code>info</code> 封面 56px 圆形 + 标题 + 艺术家（含 VIP 角标）<br>
+    ② <code>engage</code> 喜欢按钮 + 评论数（独立互动区，红色心）<br>
+    ③ <code>controls</code> 心动/上一首/<b>红色大播放键</b>/下一首/队列 — 5 个按钮，播放键 50×50 圆形红色<br>
+    ④ <code>tools</code> 歌词 / 音量（<b>hover 向上弹出垂直音量条</b>：96×148 白卡 + 5px 红色进度 + 百分比） / 更多（⋯，先预留）<br>
+    ⑤ <code>progress-area</code> 全宽进度条（Grid 列跨 1/-1，紧贴底部 8px；原图未显示进度条，留为可选区域）<br>
+    <b>差异 vs 旧 DesktopMainPage 原型</b>：旧版中央是「模式/上下/播放/上下/喜欢」+ 下方进度条；新原型「喜欢+评论数」拆出来放左侧独立区，控制组只 5 个键（去掉了旧的"模式+喜欢"塞在中央），工具区多出「电池+计时+音量+更多」4 个图标，色彩用网易云红 <code>#E72D2C</code>。
+  </div>
+
+</div>
+</body>
+</html>

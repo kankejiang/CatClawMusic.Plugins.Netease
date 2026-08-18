@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>桌面端播放页原型 · CatClaw Music</title>
+<style>
+  :root{
+    --bg:#F4F4F6;
+    --card:#FFFFFF;
+    --text:#2A2A2E;
+    --text-2:#6A6A72;
+    --hint:#9C9CA4;
+    --red:#E72D2C;
+    --red-soft:#FF6B6A;
+    --line:rgba(0,0,0,.07);
+    --accent:#5B8CFF;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:#E8E8EC;font:13px/1.45 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--text);}
+  .stage{padding:20px;display:flex;flex-direction:column;gap:16px;align-items:flex-start;}
+  h1{font-size:13px;font-weight:500;color:var(--text-2);letter-spacing:.5px;}
+  h1 small{color:var(--hint);margin-left:8px;font-weight:400;}
+
+  /* ── 播放页窗口（1280×800） ── */
+  .player-page{
+    width:1280px;height:800px;
+    background:linear-gradient(135deg,#EDEDF2 0%,#F8F8FA 55%,#FFFFFF 100%);
+    border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.10);
+    position:relative;display:flex;flex-direction:column;overflow:hidden;
+  }
+
+  /* ── 顶部横幅（白色半透明渐变） ── */
+  .top-bar{
+    height:48px;flex:0 0 48px;
+    display:flex;align-items:center;gap:14px;
+    padding:0 20px;
+    background:linear-gradient(180deg,rgba(255,255,255,.92) 0%,rgba(255,255,255,.35) 100%);
+    border-bottom:1px solid var(--line);
+    position:relative;z-index:10;
+  }
+  .collapse-btn{
+    display:flex;align-items:center;gap:7px;
+    border:1px solid var(--line);border-radius:16px;
+    background:rgba(255,255,255,.6);padding:6px 14px;
+    cursor:pointer;color:var(--text-2);font-size:12.5px;font-weight:600;
+  }
+  .collapse-btn svg{width:13px;height:13px;}
+  .now-playing{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2);}
+  .now-playing b{color:var(--text);font-weight:600;}
+  .top-right{margin-left:auto;display:flex;align-items:center;gap:12px;}
+  .mode-chip{
+    display:flex;align-items:center;gap:6px;
+    border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.65);
+    padding:5px 12px;font-size:12px;color:var(--text-2);cursor:pointer;
+  }
+  .mode-chip svg{width:14px;height:14px;}
+  .icon-btn{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;color:var(--text-2);}
+  .icon-btn:hover{background:rgba(0,0,0,.05);color:var(--text);}
+  .icon-btn svg{width:17px;height:17px;}
+
+  /* ── 主体 ── */
+  .body{flex:1;display:flex;min-height:0;}
+
+  /* 左侧：封面 + 底部播放条 */
+  .left{width:44%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 30px 0;position:relative;}
+  .cover-wrap{display:flex;flex-direction:column;align-items:center;gap:14px;}
+  .cover{
+    width:300px;height:300px;border-radius:14px;
+    background:linear-gradient(135deg,#3a4658 0%,#141a22 100%);
+    box-shadow:0 18px 40px rgba(0,0,0,.18);
+    display:flex;align-items:center;justify-content:center;
+    color:#4a5a6a;font-size:64px;
+  }
+  .cover-meta{text-align:center;}
+  .cover-meta .t{font-size:15px;font-weight:600;color:var(--text);display:flex;align-items:center;justify-content:center;gap:7px;}
+  .vip{background:var(--red);color:#fff;font-size:9.5px;font-weight:700;padding:2px 5px;border-radius:3px;}
+  .cover-meta .a{font-size:12px;color:var(--text-2);margin-top:3px;}
+
+  /* 底部播放条（悬浮在左栏底部） */
+  .player-bar{
+    position:absolute;left:0;right:0;bottom:0;height:64px;
+    display:flex;align-items:center;gap:18px;
+    padding:0 24px;
+    background:rgba(255,255,255,.92);
+    border-top:1px solid var(--line);
+  }
+  .pb-info{display:flex;align-items:center;gap:10px;min-width:0;}
+  .pb-cover{width:40px;height:40px;border-radius:8px;background:linear-gradient(135deg,#3a4658,#141a22);flex:0 0 auto;}
+  .pb-meta{min-width:0;line-height:1.25;}
+  .pb-meta .t{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px;}
+  .pb-meta .a{font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pb-like{display:flex;align-items:center;gap:6px;color:var(--red);cursor:pointer;}
+  .pb-like svg{width:18px;height:18px;fill:var(--red);}
+  .pb-like .c{font-size:11.5px;color:var(--text-2);}
+  .pb-ctrls{display:flex;align-items:center;gap:14px;margin:0 auto;}
+  .pb-ctrls .ic{width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer;border-radius:6px;}
+  .pb-ctrls .ic:hover{background:rgba(0,0,0,.05);}
+  .pb-ctrls .ic svg{width:19px;height:19px;}
+  .pb-ctrls .play{
+    width:44px;height:44px;border-radius:50%;background:var(--red);color:#fff;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    box-shadow:0 4px 12px rgba(231,45,44,.35);
+  }
+  .pb-ctrls .play svg{width:19px;height:19px;fill:#fff;}
+  .pb-tools{display:flex;align-items:center;gap:12px;color:var(--text-2);}
+  .pb-tools .ic{width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;}
+  .pb-tools .ic:hover{background:rgba(0,0,0,.05);}
+  .pb-tools .ic svg{width:17px;height:17px;}
+
+  /* 右侧：信息 + 歌词 */
+  .right{flex:1;display:flex;flex-direction:column;padding:34px 44px 20px 8px;min-width:0;}
+  .song-head{display:flex;align-items:baseline;gap:10px;}
+  .song-head h2{font-size:26px;font-weight:700;color:var(--text);letter-spacing:.3px;}
+  .song-head .vip{font-size:10px;}
+  .meta-row{display:flex;align-items:center;gap:14px;margin-top:10px;font-size:12.5px;color:var(--text-2);flex-wrap:wrap;}
+  .meta-row .label{color:var(--hint);}
+  .meta-row b{color:var(--text);font-weight:600;}
+  .meta-row .src{display:flex;align-items:center;gap:5px;}
+  .meta-row .src .tag{background:var(--accent);color:#fff;font-size:9.5px;font-weight:700;padding:2px 5px;border-radius:3px;}
+
+  .chips{display:flex;gap:10px;margin-top:16px;}
+  .chip{
+    padding:6px 18px;border-radius:15px;font-size:12.5px;
+    background:rgba(255,255,255,.75);border:1px solid var(--line);color:var(--text-2);cursor:pointer;
+  }
+  .chip.active{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
+
+  .lyric-title{display:flex;align-items:center;gap:8px;margin-top:22px;}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);}
+  .lyric-title span{font-size:10.5px;font-weight:700;letter-spacing:2px;color:var(--hint);}
+
+  .lyrics{flex:1;margin-top:14px;overflow:hidden;position:relative;min-height:0;}
+  .lyric-line{padding:7px 0;font-size:14px;color:var(--hint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .2s;}
+  .lyric-line.cur{color:var(--red);font-weight:700;font-size:15px;}
+  .lyric-line.meta{font-size:11.5px;color:#B9B9C0;}
+  .lyrics::after{content:"";position:absolute;left:0;right:0;top:0;height:44px;background:linear-gradient(180deg,#F4F4F6,rgba(244,244,246,0));pointer-events:none;}
+  .lyrics::before{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(0deg,#F4F4F6,rgba(244,244,246,0));pointer-events:none;z-index:2;}
+
+  /* 右侧竖排工具 */
+  .side-tools{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:18px;align-items:center;color:var(--text-2);}
+  .vol-ring{
+    width:52px;height:52px;border-radius:50%;
+    background:conic-gradient(var(--red) 0 62%, rgba(0,0,0,.08) 62% 100%);
+    display:flex;align-items:center;justify-content:center;position:relative;
+  }
+  .vol-ring::after{content:"";position:absolute;inset:5px;border-radius:50%;background:#fff;}
+  .vol-ring .pct{position:relative;z-index:1;font-size:10.5px;font-weight:700;color:var(--text-2);}
+  .side-btn{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:9px;cursor:pointer;font-size:12px;font-weight:600;}
+  .side-btn:hover{background:rgba(0,0,0,.05);}
+  .side-btn svg{width:16px;height:16px;}
+
+  /* 底部进度条 */
+  .progress{height:3px;background:var(--line);position:absolute;left:0;right:0;bottom:0;z-index:20;}
+  .progress-fill{height:100%;width:33%;background:var(--red);}
+
+  .notes{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px 18px;width:1280px;color:var(--text-2);font-size:12px;line-height:1.7;}
+  .notes b{color:var(--text);}
+  .notes code{background:#F0F0F3;padding:1px 5px;border-radius:3px;font-size:11px;color:#444;}
+</style>
+</head>
+<body>
+<div class="stage">
+  <h1>桌面端播放页原型 <small>参照网易云 PC 播放页 · 1280×800 · 覆盖层内全屏</small></h1>
+
+  <div class="player-page">
+
+    <!-- 顶部横幅 -->
+    <div class="top-bar">
+      <div class="collapse-btn" title="收起播放页">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 15.4L12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg>
+        收起
+      </div>
+      <div class="now-playing">正在播放 <b>Peter Pan Was Right</b> · Anson Seabra</div>
+      <div class="top-right">
+        <div class="mode-chip" title="播放模式">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+          播放模式
+        </div>
+        <div class="icon-btn" title="设置"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.1 12.9c.05-.3.1-.6.1-.9s-.04-.6-.1-.9l2-1.55c.2-.15.25-.4.13-.65l-1.9-3.3a.5.5 0 0 0-.6-.22l-2.4.96c-.5-.38-1-.7-1.6-.95L14.4 3.3a.5.5 0 0 0-.5-.42h-3.8a.5.5 0 0 0-.5.42l-.38 2.5c-.57.24-1.1.56-1.6.95l-2.4-.96a.5.5 0 0 0-.6.22l-1.9 3.3c-.12.24-.07.5.13.65l2 1.55c-.07.3-.1.6-.1.9s.03.6.1.9l-2 1.55c-.2.15-.25.4-.13.65l1.9 3.3c.12.24.4.35.6.22l2.4-.96c.5.38 1 .7 1.6.95l.38 2.5c.04.24.24.42.5.42h3.8c.25 0 .45-.18.5-.42l.38-2.5c.57-.24 1.1-.56 1.6-.95l2.4.96c.24.1.5 0 .6-.22l1.9-3.3c.12-.24.07-.5-.13-.65l-2-1.55zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></div>
+        <div class="icon-btn" title="最小化"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 11h12v2H6z"/></svg></div>
+        <div class="icon-btn" title="最大化"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 5h14v14H5z" fill="none" stroke="currentColor" stroke-width="2"/></svg></div>
+        <div class="icon-btn" title="关闭"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.4 5L12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4z"/></svg></div>
+      </div>
+    </div>
+
+    <!-- 主体 -->
+    <div class="body">
+
+      <!-- 左侧：封面（封面下不放歌曲信息，底部播放条已有） -->
+      <div class="left">
+        <div class="cover-wrap">
+          <div class="cover">♬</div>
+        </div>
+
+        <!-- 底部播放条 -->
+        <div class="player-bar">
+          <div class="pb-info">
+            <div class="pb-cover"></div>
+            <div class="pb-meta">
+              <div class="t">Peter Pan Was Right <span class="vip">VIP</span></div>
+              <div class="a">Anson Seabra</div>
+            </div>
+          </div>
+          <div class="pb-like"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9.2C.8 8.2 2.5 4 6.3 4c2 0 3.5 1.2 4.7 2.7C12.2 5.2 13.7 4 15.7 4c3.8 0 5.5 4.2 3.8 7.8C19 16.5 12 21 12 21z"/></svg><span class="c">1w</span></div>
+          <div class="pb-ctrls">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></div>
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg></div>
+            <div class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></div>
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm17-9v10l-5-5z"/></svg></div>
+          </div>
+          <div class="pb-tools">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 7h16v2H4zm0 5h12v2H4zm0 5h8v2H4zm13-1.2A2.8 2.8 0 1 0 17 13v5.5z"/></svg></div>
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2c0-1.8-1-3.3-2.5-4v8c1.5-.7 2.5-2.2 2.5-4z"/></svg></div>
+            <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/></svg></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧：信息 + 歌词 -->
+      <div class="right">
+        <div class="song-head">
+          <h2>Peter Pan Was Right</h2><span class="vip">VIP</span>
+        </div>
+        <div class="meta-row">
+          <span><span class="label">专辑：</span><b>Peter Pan Was...</b></span>
+          <span><span class="label">歌手：</span><b>Anson Seabra</b></span>
+          <span class="src"><span class="label">来源：</span><span class="tag">推荐</span>又蹦这歌我喜欢</span>
+        </div>
+
+        <div class="chips">
+          <div class="chip active">歌词</div>
+        </div>
+
+        <div class="lyric-title"><span class="dot"></span><span>LYRICS · 同步歌词</span></div>
+        <div class="lyrics">
+          <div class="lyric-line meta">作词：Anson Long-Seabra / Jeremy Fedryk</div>
+          <div class="lyric-line meta">作曲：Anson Long-Seabra / Jeremy Fedryk</div>
+          <div class="lyric-line">I guess Peter Pan was right</div>
+          <div class="lyric-line">Growing up's a waste of time</div>
+          <div class="lyric-line cur">So I think I'll fly away</div>
+          <div class="lyric-line">Set a course for brighter days</div>
+          <div class="lyric-line">Soon I'll find that second star</div>
+          <div class="lyric-line">I'm soaring, now I'm never coming down</div>
+          <div class="lyric-line">And I'll make my home in Neverland</div>
+          <div class="lyric-line">I'll build a castle out of plans</div>
+          <div class="lyric-line">That never leave my head</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部进度条 -->
+    <div class="progress"><div class="progress-fill"></div></div>
+  </div>
+
+  <div class="notes">
+    <b>结构</b><br>
+    ① <code>top-bar</code> 48px 白色渐变横幅：左「收起↓」胶囊 + 正在播放信息；右「播放模式」chip + 设置 + 窗口按钮（播放页为覆盖层时窗口按钮可省）<br>
+    ② <code>left</code> 44% 宽：仅封面 300px 圆角 14（封面下不放歌曲信息，底部播放条已有）<br>
+    ③ <code>player-bar</code> 底部播放条（悬浮左栏底）：歌曲信息 + ❤️1w + 模式/上/红色播放/下/队列 + 歌词/音量/⋯ 工具<br>
+    ④ <code>right</code>：标题+VIP → 专辑/歌手/来源 → 仅「歌词」chip → LYRICS 歌词多行（当前行红色高亮）<br>
+    ⑤ 右侧竖排工具（音量圆环/译/Tr/⋯）：已删除<br>
+    ⑥ <code>progress</code> 底部全宽红色进度细线
+  </div>
+</div>
+</body>
+</html>
