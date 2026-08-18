@@ -441,17 +441,12 @@ public class NeteaseOnlineMusicPage : ContentPage
 
         try
         {
-            // 跳转宿主的 WebView 登录页（通过 Shell 路由）。
+            // 跳转宿主的 WebView 登录页。
             // 宿主 WebViewLoginViewModel 通过 platform 参数匹配 IOnlineMusicPlugin.PlatformName，
             // 网易云插件的 PlatformName 固定为 "netease"。
-            if (Shell.Current != null)
-            {
-                await Shell.Current.GoToAsync($"webviewlogin?platform=netease");
-                return;
-            }
-
-            // 桌面端宿主无 Shell（窗口直连，不走 Shell 导航栈）：
-            // 回退走宿主导航服务（NavigationService 桌面端会把路由解析为页面并嵌入主区域打开）。
+            // 注意：本插件页由 OpenPluginEntryAsync 经 shell.Navigation.PushAsync 推入导航栈，
+            // 当前页不是 Shell 路由节点——Shell.Current.GoToAsync 会在 GetOrCreateFromRoute
+            // 找不到正确父节点而 NRE。因此统一走 NavigationService（桌面嵌入/Shell 都由宿主处理）。
             var nav = _services.GetService<INavigationService>();
             if (nav != null)
             {
