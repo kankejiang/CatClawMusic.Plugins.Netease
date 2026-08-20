@@ -25,7 +25,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     private static readonly Dictionary<string, string> FmModeLabels = new()
     {
         ["DEFAULT"] = "默认模式", ["FAMILIAR"] = "熟悉模式", ["EXPLORE"] = "探索模式",
-        // 场景模式（全部经 /api/v1/radio/get?mode=CODE 验证可用）
+        // 场景模式（36 种，经 mode=SCENE_RCMD&submode=CODE 生效）
         ["LATE_NIGHT_EMO"] = "伤感", ["EXERCISE"] = "运动", ["SLEEP_HELP"] = "助眠", ["RELAX"] = "放松",
         ["HAPPINESS"] = "欢快", ["LYRICAL"] = "抒情", ["CURE"] = "治愈", ["FOCUS"] = "专注",
         ["ROMANTIC"] = "情歌", ["RHYTHM_BLUES"] = "R&B", ["RAINY"] = "下雨天", ["GAMES"] = "打游戏",
@@ -321,24 +321,12 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<List<FmModeCategory>> GetFmModesAsync()
     {
         var list = new List<FmModeCategory>();
-        // 推荐模式（3 种）
+        // 推荐模式（3 种，官方 mode 参数）
         list.Add(new FmModeCategory { Type = "mode", Code = "DEFAULT", Title = "默认模式", SubTitle = "沿着目前喜好继续聆听", Icon = "🎵" });
         list.Add(new FmModeCategory { Type = "mode", Code = "FAMILIAR", Title = "熟悉模式", SubTitle = "喜欢过的歌曲与相似推荐", Icon = "❤️" });
         list.Add(new FmModeCategory { Type = "mode", Code = "EXPLORE", Title = "探索模式", SubTitle = "多元曲风与小众佳作", Icon = "🧭" });
-        // 场景模式（36 种，4 列 9 行）
-        var sceneCodes = new[]
-        {
-            "LATE_NIGHT_EMO", "EXERCISE", "SLEEP_HELP", "RELAX",
-            "HAPPINESS", "LYRICAL", "CURE", "FOCUS",
-            "ROMANTIC", "RHYTHM_BLUES", "RAINY", "GAMES",
-            "RAP", "K_POP", "ORIGINAL_MUSICIAL", "ELECTRONIC",
-            "COMMUTE", "BATH", "COFFEE_SHOP", "ROCK",
-            "INSPIRATIONAL", "CHINESE", "EUROPE_AMERICA", "CANTONESE",
-            "DJ", "CLASSIC", "LIGHT_MUSIC", "CHINESE_STYLE",
-            "FOLK", "ACG", "CLASSICAL", "JAZZ",
-            "JAPANESE", "WORLD", "FRENCH", "BLUES",
-        };
-        foreach (var code in sceneCodes)
+        // 场景模式（36 种，4 列 9 行；经 mode=SCENE_RCMD&submode=CODE 生效）
+        foreach (var code in NeteaseOpenApiClient.FmSceneCodes)
         {
             if (FmModeLabels.TryGetValue(code, out var title))
                 list.Add(new FmModeCategory { Type = "scene", Code = code, Title = title });

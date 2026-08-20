@@ -439,12 +439,26 @@ public class NeteaseOpenApiClient
 
     // ════════════════ 私人漫游 / 每日推荐 ════════════════
 
+    /// <summary>私人漫游场景模式码（须走 mode=SCENE_RCMD&amp;submode=&lt;code&gt;，不能直接当 mode 传）。</summary>
+    public static readonly System.Collections.Generic.HashSet<string> FmSceneCodes = new()
+    {
+        "LATE_NIGHT_EMO", "EXERCISE", "SLEEP_HELP", "RELAX",
+        "HAPPINESS", "LYRICAL", "CURE", "FOCUS",
+        "ROMANTIC", "RHYTHM_BLUES", "RAINY", "GAMES",
+        "RAP", "K_POP", "ORIGINAL_MUSICIAL", "ELECTRONIC",
+        "COMMUTE", "BATH", "COFFEE_SHOP", "ROCK",
+        "INSPIRATIONAL", "CHINESE", "EUROPE_AMERICA", "CANTONESE",
+        "DJ", "CLASSIC", "LIGHT_MUSIC", "CHINESE_STYLE",
+        "FOLK", "ACG", "CLASSICAL", "JAZZ",
+        "JAPANESE", "WORLD", "FRENCH", "BLUES",
+    };
+
     /// <summary>
     /// 私人漫游（随机推荐 /api/v1/radio/get）。
     /// 该接口一次通常只返回 1 首（网易云私人 FM 模型），故循环拉取并去重，
     /// 直到凑齐 <paramref name="num"/> 首或达到安全上限，模拟官方"无限电台"的首批缓冲。
     /// </summary>
-    /// <param name="mode">推荐模式（DEFAULT/FAMILIAR/EXPLORE 或场景 code 如 ROCK）；空或 DEFAULT = 默认</param>
+    /// <param name="mode">推荐模式（DEFAULT/FAMILIAR/EXPLORE 或场景码如 ROCK）；空或 DEFAULT = 默认</param>
     public async Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10, string? mode = null)
     {
         try
@@ -453,10 +467,15 @@ public class NeteaseOpenApiClient
             var seen = new HashSet<string>(StringComparer.Ordinal);
             int attempts = 0;
             int maxAttempts = num * 3; // 安全上限，避免接口异常时死循环
-            // mode 参数：DEFAULT 或空不带 query（保持原生行为），其他拼到 URL
+            // mode 参数：DEFAULT 或空不带 query（保持原生行为）；场景码走 SCENE_RCMD+submode；其余（aidj/FAMILIAR/EXPLORE）直接作为 mode
             var urlBase = "https://music.163.com/api/v1/radio/get";
-            var query = string.IsNullOrWhiteSpace(mode) || mode == "DEFAULT"
-                ? "" : $"?mode={Uri.EscapeDataString(mode)}";
+            string query;
+            if (string.IsNullOrWhiteSpace(mode) || mode == "DEFAULT")
+                query = "";
+            else if (FmSceneCodes.Contains(mode))
+                query = $"?mode=SCENE_RCMD&submode={Uri.EscapeDataString(mode)}";
+            else
+                query = $"?mode={Uri.EscapeDataString(mode)}";
             while (collected.Count < num && attempts < maxAttempts)
             {
                 attempts++;
