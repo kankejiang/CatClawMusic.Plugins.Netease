@@ -65,7 +65,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.6";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.5";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
