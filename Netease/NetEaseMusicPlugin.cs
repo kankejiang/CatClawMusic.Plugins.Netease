@@ -40,6 +40,24 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>当前 FM 推荐模式 code（DEFAULT/FAMILIAR/EXPLORE 或场景码）；GetPrivateFmAsync 传给 API</summary>
     private string _currentFmMode = "DEFAULT";
 
+    // ── 场景模式：按关键词搜索填充（替代无效的 SCENE_RCMD 原生场景），内存+文件持久化去重 ──
+    private readonly List<OnlineSong> _scenePool = new();
+    private readonly HashSet<string> _scenePoolIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _sceneUsedPlaylists = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _sceneFillLock = new(1, 1);
+    private string _sceneKeyword = "";
+    private int _sceneSearchPage = 1;
+    private int _scenePoolPos;
+    private int _scenePlaylistCursor;
+
+    /// <summary>场景已补齐的歌曲 id（内存 + 文件持久化，重启后依然去重；上限 2000 滚动淘汰）</summary>
+    private static readonly string SceneHistoryFile =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CatClawMusic.Maui", "netease_scene_served.txt");
+    private static readonly HashSet<string> _sceneServedIds = new(StringComparer.Ordinal);
+    private static bool _sceneServedLoaded;
+    private const int SceneServedMax = 2000;
+
     /// <summary>音质档位持久化文件</summary>
     private static readonly string QualityFilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -47,7 +65,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.5";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.6";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
@@ -255,9 +273,104 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
         return result.Count > 0 ? result : null;
     }
 
-    /// <summary>私人漫游（随机推荐）</summary>
-    public Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10)
-        => _client.GetPrivateFmAsync(num, _currentFmMode);
+    /// <summary>私人漫游（随机推荐）。推荐模式走原生 FM；场景模式改为按关键词搜索填充。</summary>
+    public async Task<List<OnlineSong>?> GetPrivateFmAsync(int num = 10)
+    {
+        if (!NeteaseOpenApiClient.FmSceneCodes.Contains(_currentFmMode))
+            return await _client.GetPrivateFmAsync(num, _currentFmMode);
+        return await FillSceneBatchAsync(num);
+    }
+
+    /// <summary>场景播放补货：从关键词搜索结果池顺序取 <paramref name="batchSize"/> 首（过滤已补齐），池空则增量拉取。</summary>
+    private async Task<List<OnlineSong>?> FillSceneBatchAsync(int batchSize)
+    {
+        await _sceneFillLock.WaitAsync();
+        try
+        {
+            // 切换场景时重置节目池，换用新关键词
+            var keyword = FmModeLabels.TryGetValue(_currentFmMode, out var lbl) ? lbl : _currentFmMode;
+            if (keyword != _sceneKeyword)
+            {
+                _scenePool.Clear(); _scenePoolIds.Clear(); _sceneUsedPlaylists.Clear();
+                _sceneSearchPage = 1; _scenePoolPos = 0; _scenePlaylistCursor = 0; _sceneKeyword = keyword;
+            }
+            EnsureSceneHistoryLoaded();
+            // 池子不够就持续拉取，直到凑齐或拉尽（每次循环无进展即停，避免死循环）
+            int attempts = 0;
+            while (_scenePoolPos + batchSize > _scenePool.Count && attempts < 6)
+            {
+                int before = _scenePool.Count;
+                await TryExpandScenePoolAsync(keyword);
+                if (_scenePool.Count == before) break;
+                attempts++;
+            }
+            var batch = new List<OnlineSong>();
+            while (batch.Count < batchSize && _scenePoolPos < _scenePool.Count)
+            {
+                var s = _scenePool[_scenePoolPos++];
+                if (s == null || string.IsNullOrWhiteSpace(s.Id)) continue;
+                batch.Add(s);
+                MarkSceneServed(s.Id);
+            }
+            return batch.Count > 0 ? batch : null;
+        }
+        finally { _sceneFillLock.Release(); }
+    }
+
+    /// <summary>扩大场景节目池：先按关键词搜歌曲（翻页）；量不足再兜底搜歌单并展开其曲目。</summary>
+    private async Task TryExpandScenePoolAsync(string keyword)
+    {
+        var songs = await _client.SearchSongsAsync(keyword, _sceneSearchPage++, 50);
+        if (songs != null)
+            foreach (var s in songs)
+                if (s != null && !string.IsNullOrWhiteSpace(s.Id)
+                    && !_sceneServedIds.Contains(s.Id) && _scenePoolIds.Add(s.Id))
+                    _scenePool.Add(s);
+        var playlists = await _client.SearchPlaylistsAsync(keyword, 12);
+        if (playlists != null)
+            while (_scenePlaylistCursor < playlists.Count && _scenePool.Count < 300)
+            {
+                var pl = playlists[_scenePlaylistCursor++];
+                if (pl == null || pl.Id == null || !_sceneUsedPlaylists.Add(pl.Id)) continue;
+                var tracks = await _client.GetPlaylistSongsAsync(pl, 1, 100);
+                if (tracks == null) continue;
+                foreach (var s in tracks)
+                    if (s != null && !string.IsNullOrWhiteSpace(s.Id)
+                        && !_sceneServedIds.Contains(s.Id) && _scenePoolIds.Add(s.Id))
+                        _scenePool.Add(s);
+            }
+    }
+
+    private static void EnsureSceneHistoryLoaded()
+    {
+        if (_sceneServedLoaded) return;
+        _sceneServedLoaded = true;
+        try
+        {
+            if (File.Exists(SceneHistoryFile))
+                foreach (var line in File.ReadAllLines(SceneHistoryFile))
+                    if (_sceneServedIds.Count < SceneServedMax && line.Trim().Length > 0)
+                        _sceneServedIds.Add(line.Trim());
+        }
+        catch { /* 历史加载失败仅失去跨会话去重能力，不影响播放 */ }
+    }
+
+    private static void MarkSceneServed(string id)
+    {
+        if (!_sceneServedIds.Add(id)) return;
+        try { File.AppendAllText(SceneHistoryFile, id + "\n"); }
+        catch { }
+        // 超过上限滚动淘汰最旧的记录，避免黑名单塞满导致场景无歌可播
+        if (_sceneServedIds.Count > SceneServedMax)
+        {
+            try
+            {
+                var lines = File.ReadAllLines(SceneHistoryFile).Skip(_sceneServedIds.Count - SceneServedMax).ToList();
+                File.WriteAllLines(SceneHistoryFile, lines);
+            }
+            catch { }
+        }
+    }
 
     /// <summary>每日推荐歌曲</summary>
     public Task<List<OnlineSong>?> GetDailyRecommendAsync(int num = 20)
