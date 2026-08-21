@@ -640,40 +640,32 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         var list = Songs.ToList();
         if (list.Count == 0) { ShowTip("播放列表为空"); return; }
 
-        // 先解析第一首立即播放，其余后台逐首解析入队（避免几十首歌逐首取链才播第一首）
+        // 整份列表先入队（直链留空占位），只立即解析并播放点击的那首；
+        // 其余直链由切歌时的 RefreshUpcomingUrlsAsync 懒加载刷新，避免整批取链导致靠后歌曲链接过期
+        var tmp = new List<Song>();
+        tmp.Add(NeteasePlaybackHelper.ToQueueSong(startSong, ""));
+        foreach (var s in list)
+            if (!ReferenceEquals(s, startSong))
+                tmp.Add(NeteasePlaybackHelper.ToQueueSong(s, ""));
+        var startEntry = tmp[0];
+        _queue.SetSongs(tmp);
+
+        // 先解析第一首立即播放，其余后台懒加载
         string? firstUrl = null;
         try { firstUrl = await _plugin.GetPlayUrlAsync(startSong, QualityLevel); } catch { }
         if (string.IsNullOrWhiteSpace(firstUrl))
         {
+            _ = NeteasePlaybackHelper.RefreshUpcomingUrlsAsync(_queue, _plugin);
             ShowTip($"《{startSong.Title}》暂时无法播放（可能是 VIP 歌曲）");
             return;
         }
-        var firstSong = NeteasePlaybackHelper.ToQueueSong(startSong, firstUrl);
-        _queue.SetSongs(new List<Song> { firstSong });
-        _queue.SelectSong(firstSong.Id);
-        try { await _audioPlayer.PlayAsync(firstSong.FilePath); }
+        startEntry.FilePath = firstUrl;
+        _queue.SelectSong(startEntry.Id);
+        try { await _audioPlayer.PlayAsync(startEntry.FilePath); }
         catch { ShowTip("播放失败，请重试"); }
 
-        // 后台解析剩余歌曲并追加到队列
-        _ = Task.Run(async () =>
-        {
-            var rest = new List<Song>();
-            foreach (var s in list)
-            {
-                if (s.Id == startSong.Id) continue;
-                string? url = null;
-                try { url = await _plugin.GetPlayUrlAsync(s, QualityLevel); } catch { }
-                if (string.IsNullOrWhiteSpace(url)) continue;
-                rest.Add(NeteasePlaybackHelper.ToQueueSong(s, url));
-            }
-            if (rest.Count > 0)
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    foreach (var r in rest) _queue.AddToEnd(r);
-                });
-            }
-        });
+        // 预刷后续直链（下一首及之后若干首），保证播放到它们时链接新鲜
+        _ = NeteasePlaybackHelper.RefreshUpcomingUrlsAsync(_queue, _plugin);
     }
 
     // ── 私人漫游（FM）无限电台 ──
@@ -900,8 +892,14 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     /// </summary>
     private void OnPlaybackStateChanged(object? sender, bool isPlaying)
     {
-        if (!isPlaying || !IsFmMode) return;
-        MainThread.BeginInvokeOnMainThread(async () => await EnsureFmBufferAsync());
+        if (!isPlaying) return;
+        if (IsFmMode)
+        {
+            MainThread.BeginInvokeOnMainThread(async () => await EnsureFmBufferAsync());
+            return;
+        }
+        // 普通列表播放：切歌开始时懒加载刷新队列即将播放歌曲的直链（防整批取链过期，靠后歌曲失效）
+        _ = NeteasePlaybackHelper.RefreshUpcomingUrlsAsync(_queue, _plugin);
     }
 
     private void OnAudioPlaybackCompleted(object? sender, EventArgs e)
@@ -1074,28 +1072,90 @@ public static class NeteasePlaybackHelper
     };
 
     /// <summary>
-    /// 通用"列表播放"：整队解析直链入队，从 <paramref name="start"/> 开始播放。
-    /// 歌手页/专辑页等轻量场景使用（无 FM 逻辑）。
+    /// 通用"列表播放"：整份列表先入队（直链留空占位），字面上只立即解析并播放 <paramref name="start"/>，
+    /// 其余直链由切歌时 <see cref="RefreshUpcomingUrlsAsync"/> 懒加载刷新。
+    /// 避免整批取链后靠后歌曲链接过期导致"只播几首就停"。歌手页/专辑页等轻量场景使用（无 FM 逻辑）。
     /// </summary>
     public static async Task<int> PlayListAsync(IServiceProvider services, NetEaseMusicPlugin plugin,
         IReadOnlyList<OnlineSong> songs, OnlineSong start)
     {
         var queue = services.GetRequiredService<PlayQueue>();
         var player = services.GetRequiredService<IAudioPlayerService>();
+        if (songs == null || songs.Count == 0) return 0;
         var temp = new List<Song>();
         foreach (var s in songs)
-        {
-            string? url = null;
-            try { url = await plugin.GetPlayUrlAsync(s, plugin.QualityLevel); } catch { }
-            if (string.IsNullOrWhiteSpace(url)) continue;
-            temp.Add(ToQueueSong(s, url));
-        }
-        if (temp.Count == 0) return 0;
+            temp.Add(ToQueueSong(s, "")); // 直链占位，靠后懒加载刷新
         queue.SetSongs(temp);
+        EnsureLazyHook(services);
+        lock (_lazySync) { _lazyQueue = queue; _lazyPlugin = plugin; } // 切歌时持 hook 自动刷新此队列
+
         var target = temp.FirstOrDefault(s => s.RemoteId == $"{start.Platform}:{start.Id}") ?? temp[0];
+        string? url = null;
+        try { url = await plugin.GetPlayUrlAsync(start, plugin.QualityLevel); } catch { }
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            _ = Task.Run(() => RefreshUpcomingUrlsAsync(queue, plugin));
+            queue.SelectSong(target.Id);
+            return temp.Count; // 起始歌暂无法播放：仍入队，后续切歌懒加载可续播其余无 VIP 限制的歌
+        }
+        target.FilePath = url;
         queue.SelectSong(target.Id);
         try { await player.PlayAsync(target.FilePath); } catch { }
+        _ = Task.Run(() => RefreshUpcomingUrlsAsync(queue, plugin));
         return temp.Count;
+    }
+
+    // ── 懒加载直链刷新：播放到达某首前才取链，避免整批取链导致靠后歌曲链接过期 ──
+    private static PlayQueue? _lazyQueue;
+    private static NetEaseMusicPlugin? _lazyPlugin;
+    private static bool _lazyHookAttached;
+    private static readonly object _lazySync = new();
+    /// <summary>RemoteId → 最近一次解析时间（用于判断直链是否仍新鲜）</summary>
+    private static readonly Dictionary<string, DateTime> _lazyResolvedAt = new(StringComparer.Ordinal);
+    private const int LazyLookahead = 3;          // 超前刷新队列中的后 3 首
+    private static readonly TimeSpan LazyMaxAge = TimeSpan.FromMinutes(15); // 超过该时长未播放则重新取链
+
+    /// <summary>为延迟直链注册一次切歌钩子（同一播放器只挂一次）</summary>
+    private static void EnsureLazyHook(IServiceProvider services)
+    {
+        if (_lazyHookAttached) return;
+        _lazyHookAttached = true;
+        IAudioPlayerService player;
+        try { player = services.GetRequiredService<IAudioPlayerService>(); }
+        catch { return; }
+        player.PlaybackStateChanged += (_, isPlaying) =>
+        {
+            if (!isPlaying) return;
+            PlayQueue? q; NetEaseMusicPlugin? p;
+            lock (_lazySync) { q = _lazyQueue; p = _lazyPlugin; }
+            if (q != null && p != null) _ = Task.Run(() => RefreshUpcomingUrlsAsync(q, p));
+        };
+    }
+
+    /// <summary>懒加载刷新即将播放歌曲的直链：对队列前瞻窗口内"直链为空或已过期"的网易云歌曲重新取链。</summary>
+    public static async Task RefreshUpcomingUrlsAsync(PlayQueue queue, NetEaseMusicPlugin plugin)
+    {
+        List<Song> upcoming;
+        try { upcoming = queue.GetUpcomingSongs(LazyLookahead); }
+        catch { return; }
+        var now = DateTime.UtcNow;
+        foreach (var song in upcoming)
+        {
+            if (song?.RemoteId == null || !song.RemoteId.StartsWith("netease:", StringComparison.Ordinal)) continue;
+            var needsResolve = string.IsNullOrEmpty(song.FilePath);
+            lock (_lazySync)
+            {
+                if (!needsResolve && _lazyResolvedAt.TryGetValue(song.RemoteId, out var t))
+                    needsResolve = (now - t) > LazyMaxAge;
+            }
+            if (!needsResolve) continue;
+            var sid = song.RemoteId.Substring("netease:".Length);
+            string? url = null;
+            try { url = await plugin.GetPlayUrlAsync(new OnlineSong { Id = sid, Platform = "netease" }, plugin.QualityLevel); } catch { }
+            if (string.IsNullOrWhiteSpace(url)) continue;
+            song.FilePath = url;
+            lock (_lazySync) _lazyResolvedAt[song.RemoteId] = now;
+        }
     }
 }
 
