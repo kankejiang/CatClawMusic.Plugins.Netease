@@ -48,14 +48,7 @@ public class NeteaseAlbumPage : ContentPage
         var backTap = new TapGestureRecognizer();
         backTap.Tapped += async (_, _) =>
         {
-            try
-            {
-                if (Shell.Current != null)
-                    await Shell.Current.Navigation.PopAsync();
-                else if (_services.GetService<INavigationService>() is { } nav)
-                    await nav.GoBackAsync();
-            }
-            catch { }
+            try { await NeteaseNav.PopAsync(this, _services); } catch { }
         };
         backButton.GestureRecognizers.Add(backTap);
 

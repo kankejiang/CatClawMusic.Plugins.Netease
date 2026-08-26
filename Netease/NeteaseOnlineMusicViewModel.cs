@@ -630,7 +630,9 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         if (song == null || string.IsNullOrWhiteSpace(song.Id)) return;
         try
         {
-            var nav = Shell.Current?.Navigation ?? (Shell.Current?.Window?.Page as NavigationPage)?.Navigation
+            // Shell.Current 在桌面无 Shell 窗口会抛异常（"?." 防不住），须走 NeteaseNav.TryGetShell；
+            // 桌面回退窗口级 Navigation 模态弹层
+            var nav = NeteaseNav.TryGetShell()?.Navigation
                 ?? Application.Current?.Windows.FirstOrDefault()?.Page?.Navigation;
             if (nav == null) { ShowTip("无法打开评论区"); return; }
             await nav.PushModalAsync(new NeteaseCommentsPage(song, _plugin));

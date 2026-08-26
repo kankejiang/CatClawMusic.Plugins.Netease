@@ -810,11 +810,13 @@ public class NeteaseOnlineMusicPage : ContentPage
         if (string.IsNullOrEmpty(id)) return;
         try
         {
-            await Shell.Current.Navigation.PushAsync(new NeteaseSimilarPlaylistsPage(id, _vm.Plugin, async (pl) =>
+            NeteaseSimilarPlaylistsPage page = null!;
+            page = new NeteaseSimilarPlaylistsPage(id, _vm.Plugin, async (pl) =>
             {
                 await _vm.OpenPlaylistAsync(pl);
-                await Shell.Current.Navigation.PopAsync();
-            }));
+                await NeteaseNav.PopAsync(page, _services);
+            });
+            await NeteaseNav.PushAsync(page);
         }
         catch { }
     }
@@ -832,7 +834,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         if (e.CurrentSelection.FirstOrDefault() is not NeteaseArtist artist) return;
         try
         {
-            await Shell.Current.Navigation.PushAsync(new NeteaseArtistPage(artist, _vm.Plugin, _services));
+            await NeteaseNav.PushAsync(new NeteaseArtistPage(artist, _vm.Plugin, _services));
         }
         catch { }
     }
@@ -862,14 +864,8 @@ public class NeteaseOnlineMusicPage : ContentPage
         var tap = new TapGestureRecognizer();
         tap.Tapped += async (_, _) =>
         {
-            try
-            {
-                if (Shell.Current != null)
-                    await Shell.Current.Navigation.PopAsync();
-                else if (_services.GetService<INavigationService>() is { } nav)
-                    await nav.GoBackAsync();
-            }
-            catch { }
+            // 桌面无 Shell：本页不在任何导航栈（嵌入模式）→ 走宿主 GoBackAsync 关闭嵌入
+            try { await NeteaseNav.PopAsync(this, _services); } catch { }
         };
         border.GestureRecognizers.Add(tap);
         return border;
