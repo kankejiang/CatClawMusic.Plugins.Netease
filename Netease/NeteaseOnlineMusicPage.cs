@@ -21,10 +21,12 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly NeteaseOnlineMusicViewModel _vm;
     private readonly IServiceProvider _services;
 
-    // 控件引用（事件处理需要）
-    private readonly CollectionView _playlistsView;
-    private readonly CollectionView _songsView;
-    private readonly CollectionView _artistsView;
+    // 控件引用（事件处理需要）。三个 CollectionView 非 readonly：WinUI 运行时修改
+    // ItemsLayout / Span 均不生效（ItemsPanel 在 handler 挂载时固化，只有构造期赋值被
+    // 消费——宽屏实测停留初始 2 列巨型卡片），列数变化时须整建视图替换。
+    private CollectionView _playlistsView;
+    private CollectionView _songsView;
+    private CollectionView _artistsView;
     private readonly ActivityIndicator _loadingIndicator;
 
     // 响应式布局引用的控件（宽屏/窄屏切换需要重排行列归属）
@@ -39,22 +41,21 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly Border myCard;
     private readonly Border recommendCard;
 
-    // 响应式布局缓存（宽屏 ≥900：入口卡片一行、歌曲/歌手多列、搜索行合一）
-    private readonly LinearItemsLayout _songsLinearLayout = new(ItemsLayoutOrientation.Vertical);
-    private readonly LinearItemsLayout _artistsLinearLayout = new(ItemsLayoutOrientation.Vertical);
+    // 响应式布局状态（宽屏 ≥900：入口卡片一行、歌曲/歌手多列、搜索行合一）
     private bool _isWideLayout;
     private bool _isLandscape;
 
-    // 列数不固定：由卡片定宽按可用宽度推导（约 200px/卡）。WinUI 上修改
-    // GridItemsLayout.Span 不会重建 ItemsPanel（宽屏实测停留初始 2 列巨型卡片），
-    // 必须整建 ItemsLayout 实例重新赋值触发布局重建，故仅跟踪 span
+    // 列数不固定：由卡片定宽按可用宽度推导（约 200px/卡）。跨档变化时整建 CollectionView
     private const double PlaylistCardWidth = 200;
     private const double ListCardWidth = 330;
     private int _playlistSpan = 2;
-    private int _listSpan = 2;
+    private int _listSpan; // 0 = 线性单列（窄屏），>0 = 网格列数
 
     // 搜索联想浮层（横竖屏切换需要重排行列归属）
     private readonly Border _suggestOverlay;
+
+    // 歌曲列表头（含返回/标题/播放全部等，整建 _songsView 时随迁）
+    private readonly Grid _songsHeader;
 
     // 头部行控件（横屏时搜索框/chips 并入头部行，需要重排行列归属）
     private readonly Grid headerGrid;
@@ -253,31 +254,11 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         categoriesScroll.SetBinding(ScrollView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
 
-        // ── 歌单网格（分页加载）──
-        _playlistsView = new CollectionView
-        {
-            ItemsLayout = new GridItemsLayout(2, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 },
-            SelectionMode = SelectionMode.Single,
-            Margin = new Thickness(16, 6, 16, 0),
-            RemainingItemsThreshold = 6,
-        };
-        _playlistsView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
-        _playlistsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
-        _playlistsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Playlists));
-        _playlistsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate());
-        _playlistsView.SelectionChanged += OnPlaylistSelected;
+        // ── 歌单网格（分页加载；初始 2 列，首次布局按定宽推导列数整建）──
+        _playlistsView = CreatePlaylistsView(_playlistSpan);
 
-        // ── 歌手列表（搜索歌手模式）──
-        _artistsView = new CollectionView
-        {
-            SelectionMode = SelectionMode.Single,
-            ItemsLayout = _artistsLinearLayout,
-            Margin = new Thickness(0, 6, 0, 0),
-        };
-        _artistsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
-        _artistsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Artists));
-        _artistsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateArtistItemTemplate());
-        _artistsView.SelectionChanged += OnArtistSelected;
+        // ── 歌手列表（搜索歌手模式；初始线性，宽屏整建为网格）──
+        _artistsView = CreateArtistsView(_listSpan);
 
         // ── 歌曲列表模式 ──
         var songsBackButton = new Border
@@ -369,32 +350,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetColumn(playAllButton, 2);
         Grid.SetColumn(historyDailyButton, 3);
         Grid.SetColumn(similarButton, 4);
+        _songsHeader = songsHeader;
 
-        _songsView = new CollectionView
-        {
-            SelectionMode = SelectionMode.Single,
-            ItemsLayout = _songsLinearLayout,
-            Margin = new Thickness(0, 6, 0, 0),
-            RemainingItemsThreshold = 8,
-        };
-        _songsView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
-        _songsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
-        _songsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
-        _songsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
-        {
-            HeartCommand = _vm.ToggleLikeCommand,
-            HeartVisibleSource = _vm,
-            HeartVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsLoggedIn),
-            TrashCommand = _vm.TrashFmSongCommand,
-            TrashVisibleSource = _vm,
-            TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
-            SimilarCommand = _vm.LoadSimilarSongsCommand,
-            MvCommand = _vm.OpenMvCommand,
-            CommentCommand = _vm.OpenCommentsCommand,
-        }));
-        _songsView.SelectionChanged += OnSongSelected;
-        // songsHeader 合并到 _songsView.Header：与 _songsView 同生死，避免 Grid Row 5 多元素重叠渲染（曾导致红条覆盖歌单列表）
-        _songsView.Header = songsHeader;
+        // 歌曲列表（初始线性，宽屏整建为网格；Header 随迁避免 Grid Row 5 多元素重叠渲染）
+        _songsView = CreateSongsView(_listSpan);
 
         // ── 加载指示器 ──
         _loadingIndicator = new ActivityIndicator
@@ -590,42 +549,123 @@ public class NeteaseOnlineMusicPage : ContentPage
             if (wide) ApplyWideLayout(w);
             else ApplyNarrowLayout();
         }
-        if (wide) UpdateListColumns(w);
 
-        // ④ 入口卡片：横屏/宽屏正方形（高度 = 列宽，封顶 126）；竖屏窄屏为横屏卡片的四分之一高度
+        // ④ 歌曲/歌手列表列数（窄屏 0 = 线性单列），跨档整建视图
+        UpdateListColumns(w);
+
+        // ⑤ 入口卡片：横屏/宽屏正方形（高度 = 列宽，封顶 126）；竖屏窄屏为横屏卡片的四分之一高度
         UpdateEntryCardHeights(w);
     }
 
     /// <summary>歌单网格列数 = 可用宽度 / 卡片定宽（200px 含间距），不固定列数。
-    /// WinUI 上修改 GridItemsLayout.Span 不重建 ItemsPanel（宽屏实测停留初始 2 列），
-    /// 须整建 ItemsLayout 实例重新赋值；跨档重建会重置滚动位置（仅宽度跨档时发生，可接受）。</summary>
+    /// WinUI 运行时改 Span 或换 ItemsLayout 实例均不生效（ItemsPanel 在 handler 挂载时
+    /// 固化），跨档时整建 CollectionView 替换；重建会重置滚动位置（仅宽度跨档时发生，可接受）。</summary>
     private void UpdatePlaylistColumns(double w)
     {
         double available = w - 32; // 左右 16px margin
         int span = Math.Clamp((int)((available + 10) / (PlaylistCardWidth + 10)), 2, 8);
-        if (span == _playlistSpan && _playlistsView.ItemsLayout is GridItemsLayout) return;
+        if (span == _playlistSpan) return;
         _playlistSpan = span;
-        _playlistsView.ItemsLayout = new GridItemsLayout(span, ItemsLayoutOrientation.Vertical)
-        {
-            HorizontalItemSpacing = 10,
-            VerticalItemSpacing = 10,
-        };
+        _playlistsView = ReplaceCollectionView(_playlistsView, CreatePlaylistsView(span), 4);
     }
 
-    /// <summary>宽屏下歌曲/歌手网格列数 = 可用宽度 / 卡片定宽（330px 含间距），同样须整建 ItemsLayout。</summary>
+    /// <summary>歌曲/歌手列表列数：窄屏 0（线性单列），宽屏 = 可用宽度 / 卡片定宽（330px），跨档整建视图。</summary>
     private void UpdateListColumns(double w)
     {
-        double available = w - 32;
-        int span = Math.Clamp((int)((available + 10) / (ListCardWidth + 10)), 2, 6);
-        if (span == _listSpan && _songsView.ItemsLayout is GridItemsLayout) return;
-        _listSpan = span;
-        var grid = new GridItemsLayout(span, ItemsLayoutOrientation.Vertical)
+        int target = 0;
+        if (_isWideLayout)
         {
-            HorizontalItemSpacing = 10,
-            VerticalItemSpacing = 10,
+            double available = w - 32;
+            target = Math.Clamp((int)((available + 10) / (ListCardWidth + 10)), 2, 6);
+        }
+        if (target == _listSpan) return;
+        _listSpan = target;
+        _songsView = ReplaceCollectionView(_songsView, CreateSongsView(target), 4);
+        _artistsView = ReplaceCollectionView(_artistsView, CreateArtistsView(target), 4);
+    }
+
+    /// <summary>整建替换 CollectionView：WinUI 上 ItemsLayout 仅构造期赋值被消费，列数变化须换新实例。
+    /// 在 contentGrid 原索引位替换，保持浮层等后置元素层级在最上。</summary>
+    private CollectionView ReplaceCollectionView(CollectionView oldView, CollectionView newView, int row)
+    {
+        var idx = contentGrid.Children.IndexOf(oldView);
+        if (idx < 0) contentGrid.Children.Add(newView);
+        else
+        {
+            contentGrid.Children.RemoveAt(idx);
+            contentGrid.Children.Insert(idx, newView);
+        }
+        Grid.SetRow(newView, row);
+        return newView;
+    }
+
+    /// <summary>歌单网格视图（span 列）</summary>
+    private CollectionView CreatePlaylistsView(int span)
+    {
+        var view = new CollectionView
+        {
+            ItemsLayout = new GridItemsLayout(span, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 },
+            SelectionMode = SelectionMode.Single,
+            Margin = new Thickness(16, 6, 16, 0),
+            RemainingItemsThreshold = 6,
         };
-        _songsView.ItemsLayout = grid;
-        _artistsView.ItemsLayout = grid;
+        view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
+        view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
+        view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Playlists));
+        view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate());
+        view.SelectionChanged += OnPlaylistSelected;
+        return view;
+    }
+
+    /// <summary>歌手列表视图（span=0 线性单列，&gt;0 网格）</summary>
+    private CollectionView CreateArtistsView(int span)
+    {
+        var view = new CollectionView
+        {
+            SelectionMode = SelectionMode.Single,
+            ItemsLayout = span > 0
+                ? new GridItemsLayout(span, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 }
+                : new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
+        view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Artists));
+        view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateArtistItemTemplate());
+        view.SelectionChanged += OnArtistSelected;
+        return view;
+    }
+
+    /// <summary>歌曲列表视图（span=0 线性单列，&gt;0 网格；Header 随迁）</summary>
+    private CollectionView CreateSongsView(int span)
+    {
+        var view = new CollectionView
+        {
+            SelectionMode = SelectionMode.Single,
+            ItemsLayout = span > 0
+                ? new GridItemsLayout(span, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 }
+                : new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            Margin = new Thickness(0, 6, 0, 0),
+            RemainingItemsThreshold = 8,
+        };
+        view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
+        view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
+        view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
+        view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
+        {
+            HeartCommand = _vm.ToggleLikeCommand,
+            HeartVisibleSource = _vm,
+            HeartVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsLoggedIn),
+            TrashCommand = _vm.TrashFmSongCommand,
+            TrashVisibleSource = _vm,
+            TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
+            SimilarCommand = _vm.LoadSimilarSongsCommand,
+            MvCommand = _vm.OpenMvCommand,
+            CommentCommand = _vm.OpenCommentsCommand,
+        }));
+        view.SelectionChanged += OnSongSelected;
+        // Header 随迁（与视图同生死，避免 Grid Row 5 多元素重叠渲染，曾导致红条覆盖歌单列表）
+        view.Header = _songsHeader;
+        return view;
     }
 
     /// <summary>入口卡片尺寸与布局：横屏/宽屏正方形（高度 = 列宽，超大屏封顶）；竖屏窄屏高度 = 横屏卡片四分之一。</summary>
@@ -722,9 +762,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         SetEntryCardCell(toplistCard, 0, 2);
         SetEntryCardCell(myCard, 0, 3);
         SetEntryCardCell(recommendCard, 0, 4);
-
-        // 歌曲/歌手多列网格（卡片定宽推导列数，WinUI 须整建 ItemsLayout）
-        UpdateListColumns(w);
+        // 歌曲/歌手多列网格由 ApplyResponsiveLayout → UpdateListColumns 统一整建
     }
 
     /// <summary>窄屏（&lt;900 且非横屏）：搜索框在上 chips 在下、入口卡片两列三行、列表单列。</summary>
@@ -761,10 +799,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         SetEntryCardCell(toplistCard, 1, 0);
         SetEntryCardCell(myCard, 1, 1);
         SetEntryCardCell(recommendCard, 2, 0);
-
-        // 列表单列
-        _songsView.ItemsLayout = _songsLinearLayout;
-        _artistsView.ItemsLayout = _artistsLinearLayout;
+        // 列表单列由 ApplyResponsiveLayout → UpdateListColumns 统一整建
     }
 
     private static void SetEntryCardCell(Border card, int row, int column)
