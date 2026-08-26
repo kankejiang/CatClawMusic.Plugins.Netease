@@ -954,6 +954,78 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
+    // ════════════════ 相似歌曲 / 历史推荐 / MV（weapi 加密接口）════════════════
+
+    /// <summary>相似歌曲（/weapi/v1/discovery/simiSong，"喜欢这首歌的人还喜欢"）</summary>
+    public async Task<List<OnlineSong>> GetSimilarSongsAsync(string songId, int limit = 20)
+    {
+        try
+        {
+            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/v1/discovery/simiSong",
+                new Dictionary<string, object> { ["songid"] = songId, ["limit"] = limit, ["offset"] = 0 }, _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return new List<OnlineSong>();
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+                return new List<OnlineSong>();
+            var list = new List<OnlineSong>();
+            foreach (var s in songs.EnumerateArray())
+            {
+                var song = ParseSong(s);
+                if (song != null) list.Add(song);
+            }
+            return list;
+        }
+        catch { return new List<OnlineSong>(); }
+    }
+
+    /// <summary>历史每日推荐（/weapi/discovery/recommend/songs/history/recent，可回味历史日推）</summary>
+    public async Task<List<OnlineSong>> GetHistoryRecommendSongsAsync()
+    {
+        try
+        {
+            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/discovery/recommend/songs/history/recent",
+                new Dictionary<string, object>(), _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return new List<OnlineSong>();
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("data", out var data) ||
+                !data.TryGetProperty("dailySongs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+                return new List<OnlineSong>();
+            var list = new List<OnlineSong>();
+            foreach (var s in songs.EnumerateArray())
+            {
+                var song = ParseSong(s);
+                if (song != null) list.Add(song);
+            }
+            return list;
+        }
+        catch { return new List<OnlineSong>(); }
+    }
+
+    /// <summary>MV 播放直链（/weapi/song/enhance/play/mv/url；r=清晰度 1080 默认）</summary>
+    public async Task<string?> GetMvUrlAsync(string mvId, int r = 1080)
+    {
+        if (string.IsNullOrWhiteSpace(mvId)) return null;
+        try
+        {
+            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/song/enhance/play/mv/url",
+                new Dictionary<string, object> { ["id"] = mvId, ["r"] = r }, _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return null;
+            foreach (var item in data.EnumerateArray())
+            {
+                if (item.TryGetProperty("url", out var u))
+                {
+                    var url = u.GetString();
+                    if (!string.IsNullOrWhiteSpace(url)) return ToHttps(url);
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     // ── 内部 ──
 
     /// <summary>公共 NeteaseCloudMusicApi 实例（播放直链兜底；实测 zm.wwoyun.cn / iwenwiki.com:3000 可用）</summary>
@@ -1056,9 +1128,21 @@ public class NeteaseOpenApiClient
             song.Internal["Vip"] = isVip;
             song.Internal["Blocked"] = blocked;
             song.Internal["Liked"] = false;
+            song.Internal["MvId"] = GetMvId(s);
             return song;
         }
         catch { return null; }
+    }
+
+    /// <summary>解析 MV id（优先 mv.id，其次顶层 mvid；无则 0）</summary>
+    private static long GetMvId(JsonElement s)
+    {
+        if (s.TryGetProperty("mv", out var mv) && mv.ValueKind == JsonValueKind.Object &&
+            mv.TryGetProperty("id", out var mid) && mid.ValueKind != JsonValueKind.Null && mid.TryGetInt64(out var v1))
+            return v1;
+        if (s.TryGetProperty("mvid", out var mvid) && mvid.ValueKind != JsonValueKind.Null && mvid.TryGetInt64(out var v2))
+            return v2;
+        return 0;
     }
 
     private static void CollectArtistNames(JsonElement arr, List<string> artists)
