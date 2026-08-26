@@ -37,6 +37,9 @@ public static class NeteaseUiKit
 
         /// <summary>MV 按钮 Command（仅歌曲有 MV 时可见）</summary>
         public System.Windows.Input.ICommand? MvCommand { get; set; }
+
+        /// <summary>评论按钮 Command（参数即歌曲本身，打开评论区）</summary>
+        public System.Windows.Input.ICommand? CommentCommand { get; set; }
     }
 
     /// <summary>
@@ -197,6 +200,24 @@ public static class NeteaseUiKit
             hasAction = true;
         }
 
+        if (options?.CommentCommand != null)
+        {
+            var comment = new Label
+            {
+                Text = "💬",
+                FontSize = 15,
+                VerticalOptions = LayoutOptions.Center,
+                Padding = new Thickness(4),
+            };
+            var commentTap = new TapGestureRecognizer();
+            commentTap.SetBinding(TapGestureRecognizer.CommandProperty,
+                new Binding(".", source: options.CommentCommand));
+            commentTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            comment.GestureRecognizers.Add(commentTap);
+            actionLayout.Children.Add(comment);
+            hasAction = true;
+        }
+
         Grid grid;
         if (hasAction)
         {
@@ -261,6 +282,56 @@ public static class NeteaseUiKit
         };
         countLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
         countLabel.SetBinding(Label.TextProperty, new Binding(nameof(OnlinePlaylist.SongCount), stringFormat: "{0} 首"));
+
+        var card = new Border
+        {
+            Padding = new Thickness(0),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+        };
+        card.SetDynamicResource(Border.BackgroundColorProperty, "CardBackgroundColor");
+        card.Content = new VerticalStackLayout
+        {
+            Spacing = 6,
+            Children = { coverBorder, nameLabel, countLabel },
+        };
+        return card;
+    }
+
+    // ── 相似/相关歌单卡片模板 ──
+
+    /// <summary>相似歌单卡片：封面 + 名称 + 「n 首」+ 播放量</summary>
+    public static View CreateSimilarPlaylistItemTemplate()
+    {
+        var coverBorder = new Border
+        {
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 12 },
+            HeightRequest = 150,
+        };
+        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var coverImage = new Image { Aspect = Aspect.AspectFill, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(SimilarPlaylistInfo.CoverUrl), converter: OnlineUrlToStreamImageConverter.Instance) { TargetNullValue = "ic_music_note" });
+        coverBorder.Content = coverImage;
+
+        var nameLabel = new Label
+        {
+            FontSize = 12,
+            FontFamily = "OpenSansSemibold",
+            MaxLines = 2,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            Padding = new Thickness(6, 0, 6, 0),
+        };
+        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        nameLabel.SetBinding(Label.TextProperty, nameof(SimilarPlaylistInfo.Name));
+
+        var countLabel = new Label
+        {
+            FontSize = 10,
+            Padding = new Thickness(6, 0, 6, 6),
+        };
+        countLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
+        countLabel.SetBinding(Label.TextProperty, new Binding(nameof(SimilarPlaylistInfo.SongCount), stringFormat: "{0} 首"));
 
         var card = new Border
         {
@@ -524,7 +595,7 @@ public static class NeteaseUiKit
     /// 在线 URL → 内存 Stream 封面（不落盘缓存）。在线歌曲封面下载到内存字节，
     /// 再用内存字典缓存避免重复下载；进程退出后自动释放，不会在本地堆积缓存文件或产生显示错误。
     /// </summary>
-    private sealed class OnlineUrlToStreamImageConverter : IValueConverter
+    internal sealed class OnlineUrlToStreamImageConverter : IValueConverter
     {
         public static readonly OnlineUrlToStreamImageConverter Instance = new();
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };

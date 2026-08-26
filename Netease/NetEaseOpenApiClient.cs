@@ -1031,6 +1031,170 @@ public class NeteaseOpenApiClient
         return null;
     }
 
+    // ════════════════ 搜索联想 / 相似歌单 / 评论（个性化与内容延展）════════════════
+
+    /// <summary>搜索建议（/api/search/suggest/web，输入联想）</summary>
+    public async Task<List<SearchSuggestion>> GetSearchSuggestAsync(string keyword, int limit = 8)
+    {
+        var list = new List<SearchSuggestion>();
+        if (string.IsNullOrWhiteSpace(keyword)) return list;
+        try
+        {
+            var url = $"https://music.163.com/api/search/suggest/web?s={Uri.EscapeDataString(keyword)}&limit={limit}";
+            using var doc = await GetJsonAsync(url);
+            if (doc == null) return list;
+            if (!doc.RootElement.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object)
+                return list;
+            if (result.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var s in songs.EnumerateArray())
+                {
+                    var name = s.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    var artists = new List<string>();
+                    if (s.TryGetProperty("artists", out var ats)) CollectArtistNames(ats, artists);
+                    var word = artists.Count > 0 ? $"{name} - {string.Join(" / ", artists)}" : name;
+                    if (list.Count < limit) list.Add(new SearchSuggestion { Word = word, Type = "song" });
+                }
+            }
+            if (result.TryGetProperty("albums", out var als) && als.ValueKind == JsonValueKind.Array)
+                foreach (var it in als.EnumerateArray())
+                {
+                    var name = it.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(name) && list.Count < limit)
+                        list.Add(new SearchSuggestion { Word = name, Type = "album" });
+                }
+            if (result.TryGetProperty("artists", out var rts) && rts.ValueKind == JsonValueKind.Array)
+                foreach (var it in rts.EnumerateArray())
+                {
+                    var name = it.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(name) && list.Count < limit)
+                        list.Add(new SearchSuggestion { Word = name, Type = "artist" });
+                }
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>热门搜索词（/weapi/hotsearchlist/get）</summary>
+    public async Task<List<string>> GetSearchHotAsync(int limit = 10)
+    {
+        var list = new List<string>();
+        try
+        {
+            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/hotsearchlist/get", new Dictionary<string, object>(), _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return list;
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return list;
+            foreach (var it in data.EnumerateArray())
+            {
+                var word = it.TryGetProperty("searchWord", out var w) ? w.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(word)) list.Add(word);
+                if (list.Count >= limit) break;
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>相似歌单（/api/playlist/similar，相关歌单）</summary>
+    public async Task<List<SimilarPlaylistInfo>> GetSimilarPlaylistsAsync(string playlistId, int limit = 10)
+    {
+        var list = new List<SimilarPlaylistInfo>();
+        if (string.IsNullOrWhiteSpace(playlistId)) return list;
+        try
+        {
+            var url = $"https://music.163.com/api/playlist/similar?id={playlistId}";
+            using var doc = await GetJsonAsync(url);
+            if (doc == null) return list;
+            JsonElement body = default;
+            if (doc.RootElement.TryGetProperty("playlists", out body)
+                || (doc.RootElement.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object
+                    && d.TryGetProperty("playlists", out body)))
+            {
+                if (body.ValueKind != JsonValueKind.Array) return list;
+                foreach (var p in body.EnumerateArray())
+                {
+                    var item = ParseSimilarPlaylist(p);
+                    if (item != null) list.Add(item);
+                    if (list.Count >= limit) break;
+                }
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    private static SimilarPlaylistInfo? ParseSimilarPlaylist(JsonElement p)
+    {
+        try
+        {
+            var id = p.TryGetProperty("id", out var idEl) && idEl.ValueKind != JsonValueKind.Null ? idEl.GetInt64().ToString() : "";
+            if (string.IsNullOrWhiteSpace(id)) return null;
+            var item = new SimilarPlaylistInfo
+            {
+                Id = id,
+                Name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                CoverUrl = CoverWithSize(ToHttps(p.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null), 300),
+                SongCount = p.TryGetProperty("trackCount", out var tc) && tc.TryGetInt32(out var tcv) ? tcv : 0,
+                PlayCount = p.TryGetProperty("playCount", out var pc) && pc.TryGetInt32(out var pcv) ? pcv : 0,
+            };
+            if (p.TryGetProperty("creator", out var cr) && cr.ValueKind == JsonValueKind.Object &&
+                cr.TryGetProperty("nickname", out var nn) && nn.ValueKind == JsonValueKind.String)
+                item.Creator = nn.GetString() ?? "";
+            return item;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>热门评论（/api/v1/resource/hot/comments/R_SO_4_{id}）</summary>
+    public Task<List<SongComment>> GetSongHotCommentsAsync(string songId, int limit = 20)
+        => GetCommentsAsync(songId, limit, 0, hot: true);
+
+    /// <summary>评论列表（/api/v1/resource/comments/R_SO_4_{id}，offset 翻页）</summary>
+    public Task<List<SongComment>> GetSongCommentsAsync(string songId, int limit = 20, int offset = 0)
+        => GetCommentsAsync(songId, limit, offset, hot: false);
+
+    private async Task<List<SongComment>> GetCommentsAsync(string songId, int limit, int offset, bool hot)
+    {
+        var list = new List<SongComment>();
+        if (string.IsNullOrWhiteSpace(songId)) return list;
+        var rid = $"R_SO_4_{songId}";
+        var url = hot
+            ? $"https://music.163.com/api/v1/resource/hot/comments/{rid}?rid={rid}&limit={limit}"
+            : $"https://music.163.com/api/v1/resource/comments/{rid}?rid={rid}&limit={limit}&offset={offset}";
+        try
+        {
+            using var doc = await GetJsonAsync(url);
+            if (doc == null) return list;
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                return list;
+            var arrField = hot ? "hotComments" : "comments";
+            if (!data.TryGetProperty(arrField, out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return list;
+            foreach (var c in arr.EnumerateArray())
+            {
+                var item = new SongComment
+                {
+                    Id = c.TryGetProperty("commentId", out var cid) ? cid.GetInt64() : 0,
+                    Content = c.TryGetProperty("content", out var ct) ? ct.GetString() ?? "" : "",
+                    Time = c.TryGetProperty("time", out var tm) ? tm.GetInt64() : 0,
+                    LikedCount = c.TryGetProperty("likedCount", out var lk) && lk.TryGetInt32(out var lkv) ? lkv : 0,
+                };
+                if (c.TryGetProperty("user", out var u) && u.ValueKind == JsonValueKind.Object)
+                {
+                    item.User = u.TryGetProperty("nickname", out var nn) ? nn.GetString() ?? "" : "";
+                    item.AvatarUrl = CoverWithSize(ToHttps(u.TryGetProperty("avatarUrl", out var av) ? av.GetString() : null), 120);
+                }
+                if (item.Content.Length > 0 || item.User.Length > 0)
+                    list.Add(item);
+            }
+        }
+        catch { }
+        return list;
+    }
+
     // ── 内部 ──
 
     /// <summary>公共 NeteaseCloudMusicApi 实例（播放直链兜底；实测 zm.wwoyun.cn / iwenwiki.com:3000 可用）</summary>

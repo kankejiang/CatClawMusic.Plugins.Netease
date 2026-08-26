@@ -402,6 +402,28 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<List<OnlinePlaylist>> GetToplistsAsync()
         => _client.GetToplistsAsync();
 
+    // ── 内容延展：搜索联想 / 相似歌单 / 评论（插件自有 UI 展示）──
+
+    /// <summary>搜索建议（输入联想）</summary>
+    public Task<List<SearchSuggestion>> GetSearchSuggestAsync(string keyword, int limit = 8)
+        => _client.GetSearchSuggestAsync(keyword, limit);
+
+    /// <summary>热门搜索词</summary>
+    public Task<List<string>> GetSearchHotAsync(int limit = 10)
+        => _client.GetSearchHotAsync(limit);
+
+    /// <summary>相似歌单（相关歌单）</summary>
+    public Task<List<SimilarPlaylistInfo>> GetSimilarPlaylistsAsync(string playlistId, int limit = 10)
+        => _client.GetSimilarPlaylistsAsync(playlistId, limit);
+
+    /// <summary>歌曲热门评论</summary>
+    public Task<List<SongComment>> GetSongHotCommentsAsync(string songId, int limit = 20)
+        => _client.GetSongHotCommentsAsync(songId, limit);
+
+    /// <summary>歌曲评论列表（offset 翻页）</summary>
+    public Task<List<SongComment>> GetSongCommentsAsync(string songId, int limit = 20, int offset = 0)
+        => _client.GetSongCommentsAsync(songId, limit, offset);
+
     // ── 扩展能力（插件自有 UI 使用）──
 
     /// <summary>歌单广场（分页）</summary>
