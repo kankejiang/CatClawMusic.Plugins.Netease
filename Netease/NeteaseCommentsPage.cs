@@ -35,7 +35,7 @@ public class NeteaseCommentsPage : ContentPage
         var back = new Label { Text = "‹", FontSize = 30, TextColor = Color.FromArgb("#888888"),
             Padding = new Thickness(12, 0, 12, 0), VerticalOptions = LayoutOptions.Center };
         var backTap = new TapGestureRecognizer();
-        backTap.Tapped += async (_, _) => await Navigation.PopModalAsync();
+        backTap.Tapped += async (_, _) => { try { await NeteaseNav.PopAsync(this); } catch { } };
         back.GestureRecognizers.Add(backTap);
 
         var title = new Label { Text = "评论 · " + song.Title, FontSize = 17, FontFamily = "OpenSansSemibold", MaxLines = 1,

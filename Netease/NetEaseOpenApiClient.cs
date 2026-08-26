@@ -413,10 +413,78 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>歌单内歌曲（v6 歌单详情，n=1000 一次拉全）</summary>
+    /// <summary>歌单内歌曲。
+    /// 优先 eapi 客户端身份（对齐 api-enhanced / NeteaseCloudMusicApi 实现）：
+    /// ① /eapi/v6/playlist/detail 传 n=100000（网页版身份 n 上限 1000，客户端可拿全量曲目）
+    ///    —— tracks 全量时直接内存分页；tracks 被 cap（少于 trackIds 总数）时
+    ///    按 trackIds 切片 + /eapi/v3/song/detail 批量补全（playlist_track_all 同款两段式）；
+    /// ② eapi 失败回退网页版 /api/v6/playlist/detail?n=1000（超千首歌单会被截断）。</summary>
     public async Task<List<OnlineSong>?> GetPlaylistSongsAsync(OnlinePlaylist playlist, int page = 1, int pageSize = 200)
     {
         if (string.IsNullOrWhiteSpace(playlist.Id)) return null;
+        if (long.TryParse(playlist.Id, out var plId))
+        {
+            var songs = await GetPlaylistSongsViaEapiAsync(plId, page, pageSize);
+            if (songs != null) return songs;
+        }
+        return await GetPlaylistSongsViaWebAsync(playlist, page, pageSize);
+    }
+
+    /// <summary>eapi v6 歌单详情取曲目（n=100000 全量；tracks 不全时走 trackIds + v3/song/detail 批量）。
+    /// 返回 null = eapi 整体失败（调用方回退网页版）；空列表 = 歌单为空/页码越界（有效结果）。</summary>
+    private async Task<List<OnlineSong>?> GetPlaylistSongsViaEapiAsync(long playlistId, int page, int pageSize)
+    {
+        try
+        {
+            var raw = await NeteaseEapi.RequestAsync(_http, "/eapi/v6/playlist/detail", new Dictionary<string, object>
+            {
+                ["id"] = playlistId,
+                ["n"] = 100000,
+                ["s"] = 8,
+            }, _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("playlist", out var pl) || pl.ValueKind != JsonValueKind.Object)
+                return null;
+
+            List<OnlineSong>? all = null;
+            if (pl.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+            {
+                all = new List<OnlineSong>();
+                foreach (var s in tracks.EnumerateArray())
+                {
+                    var song = ParseSong(s);
+                    if (song != null) all.Add(song);
+                }
+            }
+            var trackIds = new List<long>();
+            if (pl.TryGetProperty("trackIds", out var tids) && tids.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var t in tids.EnumerateArray())
+                    if (t.TryGetProperty("id", out var tid) && tid.TryGetInt64(out var tv))
+                        trackIds.Add(tv);
+            }
+
+            if (all != null && (trackIds.Count == 0 || all.Count >= trackIds.Count))
+            {
+                var start = (page - 1) * pageSize;
+                if (start >= all.Count) return new List<OnlineSong>();
+                return all.Skip(start).Take(pageSize).ToList();
+            }
+            if (trackIds.Count > 0)
+            {
+                var start = (page - 1) * pageSize;
+                if (start >= trackIds.Count) return new List<OnlineSong>();
+                return await FetchSongsByIdsAsync(trackIds.Skip(start).Take(pageSize).ToList());
+            }
+            return all;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>网页版 v6 歌单详情取曲目（浏览器身份，n=1000 上限；eapi 失败时的兜底）</summary>
+    private async Task<List<OnlineSong>?> GetPlaylistSongsViaWebAsync(OnlinePlaylist playlist, int page, int pageSize)
+    {
         try
         {
             var url = $"https://music.163.com/api/v6/playlist/detail?id={playlist.Id}&n=1000&s=8";
@@ -435,6 +503,31 @@ public class NeteaseOpenApiClient
             return all.Skip(start).Take(pageSize).ToList();
         }
         catch { return null; }
+    }
+
+    /// <summary>按 id 批量取歌曲详情（/eapi/v3/song/detail，c=[{"id":..}]，单批上限 1000）</summary>
+    private async Task<List<OnlineSong>> FetchSongsByIdsAsync(List<long> ids)
+    {
+        var result = new List<OnlineSong>();
+        foreach (var chunk in ids.Chunk(1000))
+        {
+            var raw = await NeteaseEapi.FetchSongDetailRawAsync(_http, chunk, _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                if (doc.RootElement.TryGetProperty("songs", out var list) && list.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var s in list.EnumerateArray())
+                    {
+                        var song = ParseSong(s);
+                        if (song != null) result.Add(song);
+                    }
+                }
+            }
+            catch { }
+        }
+        return result;
     }
 
     // ════════════════ 私人漫游 / 每日推荐 ════════════════

@@ -121,7 +121,7 @@ public class NeteaseSimilarPlaylistsPage : ContentPage
         };
         backLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
         var tap = new TapGestureRecognizer();
-        tap.Tapped += async (_, _) => await Shell.Current.Navigation.PopAsync();
+        tap.Tapped += async (_, _) => { try { await NeteaseNav.PopAsync(this); } catch { } };
         backLabel.GestureRecognizers.Add(tap);
         return backLabel;
     }

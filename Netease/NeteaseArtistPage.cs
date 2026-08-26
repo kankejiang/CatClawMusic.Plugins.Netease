@@ -49,14 +49,7 @@ public class NeteaseArtistPage : ContentPage
         var backTap = new TapGestureRecognizer();
         backTap.Tapped += async (_, _) =>
         {
-            try
-            {
-                if (Shell.Current != null)
-                    await Shell.Current.Navigation.PopAsync();
-                else if (_services.GetService<INavigationService>() is { } nav)
-                    await nav.GoBackAsync();
-            }
-            catch { }
+            try { await NeteaseNav.PopAsync(this, _services); } catch { }
         };
         backButton.GestureRecognizers.Add(backTap);
 
@@ -169,7 +162,7 @@ public class NeteaseArtistPage : ContentPage
         {
             albumsView.SelectedItem = null;
             if (e.CurrentSelection.FirstOrDefault() is not NeteaseAlbum album) return;
-            try { await Shell.Current.Navigation.PushAsync(new NeteaseAlbumPage(album, _plugin, _services)); } catch { }
+            try { await NeteaseNav.PushAsync(new NeteaseAlbumPage(album, _plugin, _services)); } catch { }
         };
 
         _loading = new ActivityIndicator { WidthRequest = 32, HeightRequest = 32, IsRunning = true, HorizontalOptions = LayoutOptions.Center, Margin = new Thickness(0, 24, 0, 0) };
