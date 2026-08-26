@@ -41,6 +41,16 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     private bool _isLoadingMore;
     private bool _browsingToplists;
 
+    // ── 相似歌单（当前浏览的歌单 → 相关歌单）──
+    private string? _currentPlaylistId;
+
+    /// <summary>当前浏览的歌单 Id（用于打开相似歌单页；null 表示非歌单上下文）</summary>
+    public string? CurrentPlaylistId => _currentPlaylistId;
+
+    /// <summary>是否显示"相似歌单"入口（仅浏览歌单歌曲时显示）</summary>
+    [ObservableProperty]
+    private bool _showSimilarPlaylists;
+
     // ── 私人漫游（FM）无限播放 ──
     /// <summary>是否处于私人漫游电台模式（播完自动续播并持续拉新歌补充缓冲）</summary>
     [ObservableProperty]
@@ -354,6 +364,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         IsLoading = true;
         SongsStatus = "正在加载歌曲...";
         CurrentListTitle = playlist.Name;
+        _currentPlaylistId = playlist.Id;
+        ShowSimilarPlaylists = true;
         _context = BrowseContext.Songs;
         Songs.Clear();
         try
@@ -383,6 +395,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         ShowSongs = false;
         ShowArtists = false;
         ShowPlaylists = true;
+        ShowSimilarPlaylists = false;
         if (_browsingToplists)
         {
             _browsingToplists = false;
@@ -610,6 +623,21 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         catch (Exception ex) { ShowTip($"打开 MV 失败：{ex.Message}"); }
     }
 
+    /// <summary>打开评论区（模态浮层，热门/最新评论）</summary>
+    [RelayCommand]
+    public async Task OpenCommentsAsync(OnlineSong? song)
+    {
+        if (song == null || string.IsNullOrWhiteSpace(song.Id)) return;
+        try
+        {
+            var nav = Shell.Current?.Navigation ?? (Shell.Current?.Window?.Page as NavigationPage)?.Navigation
+                ?? Application.Current?.Windows.FirstOrDefault()?.Page?.Navigation;
+            if (nav == null) { ShowTip("无法打开评论区"); return; }
+            await nav.PushModalAsync(new NeteaseCommentsPage(song, _plugin));
+        }
+        catch (Exception ex) { ShowTip($"打开评论失败：{ex.Message}"); }
+    }
+
     // ── 搜索（歌曲/歌单/歌手三模式）──
 
     private const int SearchPageSize = 20;
@@ -629,6 +657,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         var q = SearchQuery?.Trim();
         if (string.IsNullOrWhiteSpace(q)) return;
+        DismissSuggest();
         // 搜索不退出电台（仅播放搜索结果时才退）
         _lastQuery = q;
         _searchPage = 1;
@@ -678,6 +707,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                     ShowArtists = false;
                     ShowSongs = true;
                     ShowHistoryDaily = false;
+                    ShowSimilarPlaylists = false;
                     break;
                 }
             }
@@ -691,6 +721,61 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             IsLoading = false;
         }
     }
+
+    // ── 搜索联想 / 热门搜索 ──
+
+    private CancellationTokenSource? _suggestCts;
+
+    /// <summary>搜索联想/热词条目（输入＝歌曲/专辑/歌手建议；空输入＝热门搜索）</summary>
+    public ObservableCollection<SearchSuggestion> SuggestItems { get; } = new();
+
+    [ObservableProperty] private bool _isSuggestVisible;
+
+    /// <summary>输入变化：防抖加载联想词；空则加载热门搜索</summary>
+    public async Task OnSearchTextChangedAsync(string? text)
+    {
+        var q = text?.Trim() ?? "";
+        _suggestCts?.Cancel();
+        var cts = _suggestCts = new CancellationTokenSource();
+        try
+        {
+            if (q.Length == 0)
+            {
+                await Task.Delay(80, cts.Token);
+                var hot = await _plugin.GetSearchHotAsync(10);
+                if (cts.IsCancellationRequested) return;
+                SuggestItems.Clear();
+                foreach (var w in hot) SuggestItems.Add(new SearchSuggestion { Word = w, Type = "hot" });
+                IsSuggestVisible = hot.Count > 0;
+            }
+            else
+            {
+                await Task.Delay(280, cts.Token);
+                var sug = await _plugin.GetSearchSuggestAsync(q, 8);
+                if (cts.IsCancellationRequested) return;
+                if (sug.Count == 0) { IsSuggestVisible = false; return; }
+                SuggestItems.Clear();
+                foreach (var s in sug) SuggestItems.Add(s);
+                IsSuggestVisible = true;
+            }
+        }
+        catch (TaskCanceledException) { }
+        catch { IsSuggestVisible = false; }
+    }
+
+    /// <summary>点击联想/热词：填入搜索框并搜索</summary>
+    [RelayCommand]
+    public async Task SelectSuggestAsync(object? item)
+    {
+        if (item is not SearchSuggestion s || string.IsNullOrWhiteSpace(s.Word)) return;
+        SearchQuery = s.Word;
+        SuggestItems.Clear();
+        IsSuggestVisible = false;
+        await SearchSongsAsync();
+    }
+
+    /// <summary>手动触发搜索时收起联想浮层</summary>
+    private void DismissSuggest() { SuggestItems.Clear(); IsSuggestVisible = false; }
 
     // ── 播放 ──
 

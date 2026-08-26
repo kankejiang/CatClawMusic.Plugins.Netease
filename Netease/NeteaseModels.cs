@@ -1,42 +1,51 @@
 namespace CatClawMusic.Plugins.Netease;
 
-/// <summary>歌手（网易云搜索结果 / 歌手页用，插件本地模型）</summary>
+/// <summary>歌手信息（cloudsearch type=100 / 歌手搜索）</summary>
 public class NeteaseArtist
 {
-    /// <summary>歌手 ID</summary>
-    public string Id { get; set; } = string.Empty;
-
-    /// <summary>歌手名</summary>
-    public string Name { get; set; } = string.Empty;
-
-    /// <summary>头像/封面 URL</summary>
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
     public string? PicUrl { get; set; }
-
-    /// <summary>歌曲数（musicSize）</summary>
     public int SongCount { get; set; }
-
-    /// <summary>专辑数（albumSize）</summary>
     public int AlbumCount { get; set; }
 }
 
-/// <summary>专辑（歌手专辑列表 / 专辑页用，插件本地模型）</summary>
+/// <summary>专辑信息（/api/artist/albums / 专辑搜索）</summary>
 public class NeteaseAlbum
 {
-    /// <summary>专辑 ID</summary>
-    public string Id { get; set; } = string.Empty;
-
-    /// <summary>专辑名</summary>
-    public string Name { get; set; } = string.Empty;
-
-    /// <summary>封面 URL</summary>
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
     public string? PicUrl { get; set; }
-
-    /// <summary>歌曲数</summary>
     public int SongCount { get; set; }
-
-    /// <summary>歌手名（展示用）</summary>
-    public string ArtistName { get; set; } = string.Empty;
-
-    /// <summary>发行时间（yyyy 展示用）</summary>
+    public string? ArtistName { get; set; }
     public string? PublishYear { get; set; }
+}
+
+/// <summary>网易云评论（歌曲热门评论区用）</summary>
+public class SongComment
+{
+    public long Id { get; set; }
+    public string User { get; set; } = "";
+    public string Content { get; set; } = "";
+    public long Time { get; set; }
+    public int LikedCount { get; set; }
+    public string? AvatarUrl { get; set; }
+}
+
+/// <summary>搜索联想词（类型：song/album/artist）</summary>
+public class SearchSuggestion
+{
+    public string Word { get; set; } = "";
+    public string Type { get; set; } = "song";
+}
+
+/// <summary>相似/相关歌单卡</summary>
+public class SimilarPlaylistInfo
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? CoverUrl { get; set; }
+    public int SongCount { get; set; }
+    public int PlayCount { get; set; }
+    public string Creator { get; set; } = "";
 }

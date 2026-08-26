@@ -3,6 +3,7 @@ using CatClawMusic.Core.Models;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
 using Microsoft.Maui.Graphics;
+using Microsoft.Maui.Layouts;
 
 namespace CatClawMusic.Plugins.Netease;
 
@@ -129,6 +130,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchEntry.SetBinding(Entry.TextProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.SearchQuery), mode: BindingMode.TwoWay));
         searchEntry.ReturnType = ReturnType.Search;
         searchEntry.Completed += async (_, _) => await _vm.SearchSongsAsync();
+        searchEntry.TextChanged += (_, e) => _ = _vm.OnSearchTextChangedAsync(e.NewTextValue);
 
         searchBorder = new Border
         {
@@ -330,16 +332,33 @@ public class NeteaseOnlineMusicPage : ContentPage
         historyDailyTap.Tapped += async (_, _) => await _vm.LoadHistoryRecommendCommand.ExecuteAsync(null);
         historyDailyButton.GestureRecognizers.Add(historyDailyTap);
 
+        // 歌单上下文的"相似歌单"入口（仅 ShowSimilarPlaylists 可见）
+        var similarButton = new Border
+        {
+            Padding = new Thickness(10, 6),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            Content = new Label { Text = "相似歌单", FontSize = 12, FontFamily = "OpenSansSemibold", VerticalOptions = LayoutOptions.Center },
+        };
+        var similarLabel = (Label)similarButton.Content!;
+        similarLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        similarButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        similarButton.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSimilarPlaylists));
+        var similarTap = new TapGestureRecognizer();
+        similarTap.Tapped += async (_, _) => await OpenSimilarPlaylistsAsync();
+        similarButton.GestureRecognizers.Add(similarTap);
+
         var songsHeader = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Auto }, new() { Width = GridLength.Star }, new() { Width = GridLength.Auto }, new() { Width = GridLength.Auto } },
+            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Auto }, new() { Width = GridLength.Star }, new() { Width = GridLength.Auto }, new() { Width = GridLength.Auto }, new() { Width = GridLength.Auto } },
             ColumnSpacing = 8,
             Padding = new Thickness(16, 4, 16, 8),
-            Children = { songsBackButton, songsTitleLabel, playAllButton, historyDailyButton },
+            Children = { songsBackButton, songsTitleLabel, playAllButton, historyDailyButton, similarButton },
         };
         Grid.SetColumn(songsTitleLabel, 1);
         Grid.SetColumn(playAllButton, 2);
         Grid.SetColumn(historyDailyButton, 3);
+        Grid.SetColumn(similarButton, 4);
 
         _songsView = new CollectionView
         {
@@ -361,6 +380,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
             SimilarCommand = _vm.LoadSimilarSongsCommand,
             MvCommand = _vm.OpenMvCommand,
+            CommentCommand = _vm.OpenCommentsCommand,
         }));
         _songsView.SelectionChanged += OnSongSelected;
         // songsHeader 合并到 _songsView.Header：与 _songsView 同生死，避免 Grid Row 5 多元素重叠渲染（曾导致红条覆盖歌单列表）
@@ -401,6 +421,28 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         tipBorder.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.HasTip));
 
+        // ── 搜索联想/热词浮层（覆盖搜索结果顶部，输入联想与热门搜索）──
+        var suggestFlex = new FlexLayout
+        {
+            Wrap = FlexWrap.Wrap,
+            AlignItems = FlexAlignItems.Start,
+            VerticalOptions = LayoutOptions.Fill,
+        };
+        BindableLayout.SetItemsSource(suggestFlex, _vm.SuggestItems);
+        BindableLayout.SetItemTemplate(suggestFlex, BuildSuggestChipTemplate());
+        var suggestOverlay = new Border
+        {
+            Content = suggestFlex,
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            Padding = new Thickness(12, 8),
+            Margin = new Thickness(12, 2, 12, 8),
+            VerticalOptions = LayoutOptions.Start,
+            MaximumHeightRequest = 320,
+        };
+        suggestOverlay.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsSuggestVisible));
+        suggestOverlay.SetDynamicResource(Border.BackgroundColorProperty, "WindowBackgroundColor");
+
         // ── 组装页面 ──
         contentGrid = new Grid
         {
@@ -412,7 +454,7 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Height = GridLength.Auto }, // categories
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, searchRowGrid, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder },
+            Children = { headerGrid, searchRowGrid, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder, suggestOverlay },
         };
         Grid.SetRow(searchRowGrid, 1);
         Grid.SetRow(entryContainer, 2);
@@ -422,6 +464,9 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(_songsView, 4);
         Grid.SetRow(_loadingIndicator, 4);
         Grid.SetRow(tipBorder, 4);
+        // 联想浮层覆盖搜索行下方区域（含内容区），置于顶层最后渲染
+        Grid.SetRow(suggestOverlay, 2);
+        Grid.SetRowSpan(suggestOverlay, 3);
 
         Content = contentGrid;
 
@@ -480,6 +525,32 @@ public class NeteaseOnlineMusicPage : ContentPage
             Log.Debug("NeteasePlugin", $"[Login] 打开登录页失败: {ex.Message}");
             _vm.ShowTip("打开登录页失败");
         }
+    }
+
+    /// <summary>搜索联想/热词 chip 模板（点击回填并搜索）</summary>
+    private DataTemplate BuildSuggestChipTemplate()
+    {
+        return new DataTemplate(() =>
+        {
+            var word = new Label { FontSize = 13, FontFamily = "OpenSansSemibold", MaxLines = 1 };
+            word.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+            word.SetBinding(Label.TextProperty, new Binding(nameof(SearchSuggestion.Word)));
+            var chip = new Border
+            {
+                StrokeThickness = 0,
+                StrokeShape = new RoundRectangle { CornerRadius = 14 },
+                BackgroundColor = Color.FromArgb("#24111122"),
+                Padding = new Thickness(12, 6),
+                Margin = new Thickness(4, 3),
+                Content = word,
+            };
+            var tap = new TapGestureRecognizer();
+            tap.SetBinding(TapGestureRecognizer.CommandProperty,
+                new Binding(nameof(NeteaseOnlineMusicViewModel.SelectSuggestCommand), source: _vm));
+            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            chip.GestureRecognizers.Add(tap);
+            return chip;
+        });
     }
 
     /// <summary>响应式布局：按可用宽度设置歌单列数、搜索行与歌曲/歌手列表列数；横屏时搜索框并入头部行。</summary>
@@ -731,6 +802,21 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchRowGrid.Children.Add(searchBorder);
         searchRowGrid.Children.Add(searchModesScroll);
         searchRowGrid.IsVisible = true;
+    }
+
+    private async Task OpenSimilarPlaylistsAsync()
+    {
+        var id = _vm.CurrentPlaylistId;
+        if (string.IsNullOrEmpty(id)) return;
+        try
+        {
+            await Shell.Current.Navigation.PushAsync(new NeteaseSimilarPlaylistsPage(id, _vm.Plugin, async (pl) =>
+            {
+                await _vm.OpenPlaylistAsync(pl);
+                await Shell.Current.Navigation.PopAsync();
+            }));
+        }
+        catch { }
     }
 
     private async void OnPlaylistSelected(object? sender, SelectionChangedEventArgs e)
