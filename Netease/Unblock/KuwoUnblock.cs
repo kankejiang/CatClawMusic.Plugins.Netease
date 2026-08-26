@@ -107,8 +107,24 @@ internal static class KuwoUnblock
         if (!resp.IsSuccessStatusCode) return null;
         var text = (await resp.Content.ReadAsStringAsync().ConfigureAwait(false)).Trim();
         if (string.IsNullOrWhiteSpace(text) || text.Length > 2048) return null;
+        // 纯文本 URL（旧格式）
         if (text.StartsWith("http", StringComparison.OrdinalIgnoreCase))
             return text.Replace("http://", "https://");
+        // 新格式：{"code":200,"msg":"success","url":"https://...mp3"}
+        if (text.StartsWith("{", StringComparison.Ordinal))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.TryGetProperty("url", out var u))
+                {
+                    var mp3 = u.GetString();
+                    if (!string.IsNullOrWhiteSpace(mp3) && mp3.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                        return mp3.Replace("http://", "https://");
+                }
+            }
+            catch { }
+        }
         return null;
     }
 
