@@ -179,8 +179,18 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<List<OnlineSong>?> GetPlaylistSongsAsync(OnlinePlaylist playlist, int page = 1, int pageSize = 200)
         => _client.GetPlaylistSongsAsync(playlist, page, pageSize);
 
-    public Task<string?> GetPlayUrlAsync(OnlineSong song, int quality = 0)
-        => _client.GetPlayUrlAsync(song.Id, quality > 0 ? quality : QualityLevel);
+    /// <summary>跨源解灰开关（默认关闭）：网易云取链全部失败时用酷我同名曲补播</summary>
+    public static bool UnblockEnabled { get; set; }
+
+    public async Task<string?> GetPlayUrlAsync(OnlineSong song, int quality = 0)
+    {
+        var url = await _client.GetPlayUrlAsync(song.Id, quality > 0 ? quality : QualityLevel);
+        if (!string.IsNullOrWhiteSpace(url) || !UnblockEnabled) return url;
+        // 跨源解灰：仅当歌曲有标题（播放/队列场景）时用「歌名+歌手」在酷我补播
+        if (string.IsNullOrWhiteSpace(song.Title)) return null;
+        try { return await KuwoUnblock.ResolveAsync(song.Title, song.Artist); }
+        catch { return null; }
+    }
 
     public Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(OnlineSong song)
         => _client.GetLyricsAsync(song.Id);
