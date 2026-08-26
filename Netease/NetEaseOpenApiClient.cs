@@ -843,10 +843,15 @@ public class NeteaseOpenApiClient
             catch { }
         }
 
-        // 方案3：无损失败 → 降档 320k 再试 enhance
-        if (br == 999000)
+        // 方案3：高品/无损受限 → 逐步降档再试 enhance（320k → 128k 标准档，规避部分 VIP/风控提升可播性）
+        if (br >= 320000)
         {
-            enhanceUrl = await GetEnhanceUrlAsync(songId, 320000);
+            if (br == 999000)
+            {
+                enhanceUrl = await GetEnhanceUrlAsync(songId, 320000);
+                if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
+            }
+            enhanceUrl = await GetEnhanceUrlAsync(songId, 128000);
             if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
         }
 
