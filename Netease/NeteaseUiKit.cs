@@ -31,6 +31,12 @@ public static class NeteaseUiKit
         /// <summary>垃圾桶可见性绑定源与属性名（如 IsFmMode）</summary>
         public object? TrashVisibleSource { get; set; }
         public string? TrashVisibleProperty { get; set; }
+
+        /// <summary>相似歌曲 Command（参数即歌曲本身）</summary>
+        public System.Windows.Input.ICommand? SimilarCommand { get; set; }
+
+        /// <summary>MV 按钮 Command（仅歌曲有 MV 时可见）</summary>
+        public System.Windows.Input.ICommand? MvCommand { get; set; }
     }
 
     /// <summary>
@@ -150,6 +156,44 @@ public static class NeteaseUiKit
                 trash.SetBinding(VisualElement.IsVisibleProperty,
                     new Binding(options.TrashVisibleProperty, source: options.TrashVisibleSource));
             actionLayout.Children.Add(trash);
+            hasAction = true;
+        }
+
+        if (options?.SimilarCommand != null)
+        {
+            var similar = new Label
+            {
+                Text = "🎼",
+                FontSize = 15,
+                VerticalOptions = LayoutOptions.Center,
+                Padding = new Thickness(4),
+            };
+            var similarTap = new TapGestureRecognizer();
+            similarTap.SetBinding(TapGestureRecognizer.CommandProperty,
+                new Binding(".", source: options.SimilarCommand));
+            similarTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            similar.GestureRecognizers.Add(similarTap);
+            actionLayout.Children.Add(similar);
+            hasAction = true;
+        }
+
+        if (options?.MvCommand != null)
+        {
+            var mv = new Label
+            {
+                Text = "🎬",
+                FontSize = 15,
+                VerticalOptions = LayoutOptions.Center,
+                Padding = new Thickness(4),
+            };
+            mv.SetBinding(VisualElement.IsVisibleProperty,
+                new Binding(nameof(OnlineSong.Internal), converter: MvVisibleConverter.Instance));
+            var mvTap = new TapGestureRecognizer();
+            mvTap.SetBinding(TapGestureRecognizer.CommandProperty,
+                new Binding(".", source: options.MvCommand));
+            mvTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            mv.GestureRecognizers.Add(mvTap);
+            actionLayout.Children.Add(mv);
             hasAction = true;
         }
 
@@ -459,6 +503,19 @@ public static class NeteaseUiKit
         public static readonly VipBadgeVisibleConverter Instance = new();
         public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
             => value is Dictionary<string, object> d && d.TryGetValue("Vip", out var v) && v is true;
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>Internal["MvId"]（>0）→ MV 按钮可见性</summary>
+    private sealed class MvVisibleConverter : IValueConverter
+    {
+        public static readonly MvVisibleConverter Instance = new();
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        {
+            if (value is not Dictionary<string, object> d || !d.TryGetValue("MvId", out var v)) return false;
+            return v is long m && m > 0;
+        }
         public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
             => throw new NotSupportedException();
     }

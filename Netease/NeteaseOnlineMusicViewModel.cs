@@ -226,6 +226,10 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     public bool HasPlaylistSongs => Songs.Count > 0;
 
+    /// <summary>歌曲列表 header 是否显示「历史每日推荐」按钮（仅每日推荐列表上下文）</summary>
+    [ObservableProperty]
+    private bool _showHistoryDaily;
+
     public NeteaseOnlineMusicViewModel(NetEaseMusicPlugin plugin, PlayQueue queue, IAudioPlayerService audioPlayer, IServiceProvider? services = null)
     {
         _plugin = plugin;
@@ -370,6 +374,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         ShowPlaylists = false;
         ShowArtists = false;
         ShowSongs = true;
+        ShowHistoryDaily = false;
     }
 
     [RelayCommand]
@@ -498,6 +503,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             IsLoading = false;
         }
         IsFmMode = Songs.Count > 0; // 私人漫游电台模式
+        ShowHistoryDaily = false;
         // 私人漫游 = 电台按钮：加载后直接开播第一首（不进歌曲列表视图），
         // 播放中播完自动续拉新歌（PlayFmSongAsync 的无限电台逻辑）；界面保持入口卡视图，播放条显示当前歌
         if (IsFmMode && Songs.Count > 0)
@@ -532,6 +538,76 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         ShowPlaylists = false;
         ShowArtists = false;
         ShowSongs = true;
+        ShowHistoryDaily = true; // 每日推荐列表内提供「历史每日推荐」入口
+    }
+
+    [RelayCommand]
+    public async Task LoadHistoryRecommendAsync()
+    {
+        IsLoading = true;
+        SongsStatus = "正在获取历史每日推荐...";
+        CurrentListTitle = "📅 历史每日推荐";
+        _context = BrowseContext.Songs;
+        Songs.Clear();
+        try
+        {
+            var songs = await _plugin.GetHistoryRecommendSongsAsync();
+            FillSongs(songs);
+            SongsStatus = Songs.Count == 0 ? "暂无历史每日推荐" : "";
+        }
+        catch (Exception ex)
+        {
+            SongsStatus = $"历史推荐获取失败：{ex.Message}";
+        }
+        finally { IsLoading = false; }
+        ShowHistoryDaily = false;
+        ShowPlaylists = false;
+        ShowArtists = false;
+        ShowSongs = true;
+    }
+
+    /// <summary>相似歌曲：把「喜欢这首歌的人还喜欢」加载进列表并自动播放第一首</summary>
+    [RelayCommand]
+    public async Task LoadSimilarSongsAsync(OnlineSong? song)
+    {
+        if (song == null) return;
+        IsLoading = true;
+        SongsStatus = "正在加载相似歌曲...";
+        CurrentListTitle = $"相似：{song.Title}";
+        _context = BrowseContext.Songs;
+        Songs.Clear();
+        try
+        {
+            var songs = await _plugin.GetSimilarSongsAsync(song.Id);
+            FillSongs(songs);
+            SongsStatus = Songs.Count == 0 ? "暂无相似歌曲" : "";
+        }
+        catch (Exception ex)
+        {
+            SongsStatus = $"相似歌曲加载失败：{ex.Message}";
+        }
+        finally { IsLoading = false; }
+        ShowHistoryDaily = false;
+        ShowPlaylists = false;
+        ShowArtists = false;
+        ShowSongs = true;
+        if (Songs.Count > 0) await PlayFromAsync(Songs[0]);
+    }
+
+    /// <summary>打开歌曲 MV：取直链后用系统浏览器播放（宿主暂无视频播放控件时的 MVP 方案）</summary>
+    [RelayCommand]
+    public async Task OpenMvAsync(OnlineSong? song)
+    {
+        if (song == null) return;
+        long mvId = song.Internal != null && song.Internal.TryGetValue("MvId", out var m) && m is long mi ? mi : 0;
+        if (mvId <= 0) { ShowTip("该歌曲暂无 MV"); return; }
+        try
+        {
+            var url = await _plugin.GetMvUrlAsync(mvId.ToString());
+            if (string.IsNullOrWhiteSpace(url)) { ShowTip("MV 获取失败"); return; }
+            await Browser.OpenAsync(url, BrowserLaunchMode.SystemPreferred);
+        }
+        catch (Exception ex) { ShowTip($"打开 MV 失败：{ex.Message}"); }
     }
 
     // ── 搜索（歌曲/歌单/歌手三模式）──
@@ -601,6 +677,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                     ShowPlaylists = false;
                     ShowArtists = false;
                     ShowSongs = true;
+                    ShowHistoryDaily = false;
                     break;
                 }
             }

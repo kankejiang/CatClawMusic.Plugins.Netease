@@ -376,6 +376,18 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<List<OnlineSong>?> GetDailyRecommendAsync(int num = 20)
         => _client.GetDailyRecommendAsync(num);
 
+    /// <summary>相似歌曲（weapi）</summary>
+    public Task<List<OnlineSong>> GetSimilarSongsAsync(string songId, int limit = 20)
+        => _client.GetSimilarSongsAsync(songId, limit);
+
+    /// <summary>历史每日推荐（weapi）</summary>
+    public Task<List<OnlineSong>> GetHistoryRecommendSongsAsync()
+        => _client.GetHistoryRecommendSongsAsync();
+
+    /// <summary>MV 播放直链（weapi）</summary>
+    public Task<string?> GetMvUrlAsync(string mvId, int r = 1080)
+        => _client.GetMvUrlAsync(mvId, r);
+
     /// <summary>排行榜列表</summary>
     public Task<List<OnlinePlaylist>> GetToplistsAsync()
         => _client.GetToplistsAsync();

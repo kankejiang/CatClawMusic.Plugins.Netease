@@ -314,15 +314,32 @@ public class NeteaseOnlineMusicPage : ContentPage
         playAllTap.Tapped += async (_, _) => await _vm.PlayAllAsync();
         playAllButton.GestureRecognizers.Add(playAllTap);
 
+        // 每日推荐列表内的"历史每日推荐"入口（仅 ShowHistoryDaily 上下文可见）
+        var historyDailyButton = new Border
+        {
+            Padding = new Thickness(10, 6),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            Content = new Label { Text = "历史日推", FontSize = 12, FontFamily = "OpenSansSemibold" },
+        };
+        historyDailyButton.SetDynamicResource(Border.BackgroundColorProperty, "PrimaryColor");
+        var historyDailyLabel = (Label)historyDailyButton.Content!;
+        historyDailyLabel.TextColor = Colors.White;
+        historyDailyButton.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowHistoryDaily));
+        var historyDailyTap = new TapGestureRecognizer();
+        historyDailyTap.Tapped += async (_, _) => await _vm.LoadHistoryRecommendCommand.ExecuteAsync(null);
+        historyDailyButton.GestureRecognizers.Add(historyDailyTap);
+
         var songsHeader = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Auto }, new() { Width = GridLength.Star }, new() { Width = GridLength.Auto } },
+            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Auto }, new() { Width = GridLength.Star }, new() { Width = GridLength.Auto }, new() { Width = GridLength.Auto } },
             ColumnSpacing = 8,
             Padding = new Thickness(16, 4, 16, 8),
-            Children = { songsBackButton, songsTitleLabel, playAllButton },
+            Children = { songsBackButton, songsTitleLabel, playAllButton, historyDailyButton },
         };
         Grid.SetColumn(songsTitleLabel, 1);
         Grid.SetColumn(playAllButton, 2);
+        Grid.SetColumn(historyDailyButton, 3);
 
         _songsView = new CollectionView
         {
@@ -342,6 +359,8 @@ public class NeteaseOnlineMusicPage : ContentPage
             TrashCommand = _vm.TrashFmSongCommand,
             TrashVisibleSource = _vm,
             TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
+            SimilarCommand = _vm.LoadSimilarSongsCommand,
+            MvCommand = _vm.OpenMvCommand,
         }));
         _songsView.SelectionChanged += OnSongSelected;
         // songsHeader 合并到 _songsView.Header：与 _songsView 同生死，避免 Grid Row 5 多元素重叠渲染（曾导致红条覆盖歌单列表）
