@@ -23,7 +23,6 @@ public class NeteaseOnlineMusicPage : ContentPage
 
     // 控件引用（事件处理需要）
     private readonly CollectionView _playlistsView;
-    private readonly GridItemsLayout _playlistsLayout;
     private readonly CollectionView _songsView;
     private readonly CollectionView _artistsView;
     private readonly ActivityIndicator _loadingIndicator;
@@ -40,13 +39,22 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly Border myCard;
     private readonly Border recommendCard;
 
-    // 响应式布局缓存（宽屏 ≥900：入口卡片一行、歌曲/歌手双列、搜索行合一）
-    private readonly GridItemsLayout _songsGridLayout = new(2, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 };
-    private readonly GridItemsLayout _artistsGridLayout = new(2, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 };
+    // 响应式布局缓存（宽屏 ≥900：入口卡片一行、歌曲/歌手多列、搜索行合一）
     private readonly LinearItemsLayout _songsLinearLayout = new(ItemsLayoutOrientation.Vertical);
     private readonly LinearItemsLayout _artistsLinearLayout = new(ItemsLayoutOrientation.Vertical);
     private bool _isWideLayout;
     private bool _isLandscape;
+
+    // 列数不固定：由卡片定宽按可用宽度推导（约 200px/卡）。WinUI 上修改
+    // GridItemsLayout.Span 不会重建 ItemsPanel（宽屏实测停留初始 2 列巨型卡片），
+    // 必须整建 ItemsLayout 实例重新赋值触发布局重建，故仅跟踪 span
+    private const double PlaylistCardWidth = 200;
+    private const double ListCardWidth = 330;
+    private int _playlistSpan = 2;
+    private int _listSpan = 2;
+
+    // 搜索联想浮层（横竖屏切换需要重排行列归属）
+    private readonly Border _suggestOverlay;
 
     // 头部行控件（横屏时搜索框/chips 并入头部行，需要重排行列归属）
     private readonly Grid headerGrid;
@@ -129,8 +137,15 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchEntry.SetDynamicResource(Entry.TextColorProperty, "TextPrimaryColor");
         searchEntry.SetBinding(Entry.TextProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.SearchQuery), mode: BindingMode.TwoWay));
         searchEntry.ReturnType = ReturnType.Search;
-        searchEntry.Completed += async (_, _) => await _vm.SearchSongsAsync();
+        searchEntry.Completed += async (_, _) => { searchEntry.Unfocus(); await _vm.SearchSongsAsync(); };
         searchEntry.TextChanged += (_, e) => _ = _vm.OnSearchTextChangedAsync(e.NewTextValue);
+        // 联想/热词浮层仅聚焦时显示（桌面空输入不再常驻热词占一整行）；聚焦无数据时预热热词
+        searchEntry.Focused += async (_, _) =>
+        {
+            _vm.IsSearchFocused = true;
+            if (_vm.SuggestItems.Count == 0) await _vm.OnSearchTextChangedAsync("");
+        };
+        searchEntry.Unfocused += (_, _) => _vm.IsSearchFocused = false;
 
         searchBorder = new Border
         {
@@ -233,20 +248,15 @@ public class NeteaseOnlineMusicPage : ContentPage
         {
             Orientation = ScrollOrientation.Horizontal,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
-            HeightRequest = 42,
+            HeightRequest = 36,
             Content = categoriesLayout,
         };
         categoriesScroll.SetBinding(ScrollView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
 
         // ── 歌单网格（分页加载）──
-        _playlistsLayout = new GridItemsLayout(2, ItemsLayoutOrientation.Vertical)
-        {
-            HorizontalItemSpacing = 10,
-            VerticalItemSpacing = 10,
-        };
         _playlistsView = new CollectionView
         {
-            ItemsLayout = _playlistsLayout,
+            ItemsLayout = new GridItemsLayout(2, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 },
             SelectionMode = SelectionMode.Single,
             Margin = new Thickness(16, 6, 16, 0),
             RemainingItemsThreshold = 6,
@@ -430,7 +440,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         BindableLayout.SetItemsSource(suggestFlex, _vm.SuggestItems);
         BindableLayout.SetItemTemplate(suggestFlex, BuildSuggestChipTemplate());
-        var suggestOverlay = new Border
+        _suggestOverlay = new Border
         {
             Content = suggestFlex,
             StrokeThickness = 0,
@@ -440,8 +450,8 @@ public class NeteaseOnlineMusicPage : ContentPage
             VerticalOptions = LayoutOptions.Start,
             MaximumHeightRequest = 320,
         };
-        suggestOverlay.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsSuggestVisible));
-        suggestOverlay.SetDynamicResource(Border.BackgroundColorProperty, "WindowBackgroundColor");
+        _suggestOverlay.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsSuggestVisible));
+        _suggestOverlay.SetDynamicResource(Border.BackgroundColorProperty, "WindowBackgroundColor");
 
         // ── 组装页面 ──
         contentGrid = new Grid
@@ -454,7 +464,7 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Height = GridLength.Auto }, // categories
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, searchRowGrid, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder, suggestOverlay },
+            Children = { headerGrid, searchRowGrid, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder, _suggestOverlay },
         };
         Grid.SetRow(searchRowGrid, 1);
         Grid.SetRow(entryContainer, 2);
@@ -465,8 +475,8 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(_loadingIndicator, 4);
         Grid.SetRow(tipBorder, 4);
         // 联想浮层覆盖搜索行下方区域（含内容区），置于顶层最后渲染
-        Grid.SetRow(suggestOverlay, 2);
-        Grid.SetRowSpan(suggestOverlay, 3);
+        Grid.SetRow(_suggestOverlay, 2);
+        Grid.SetRowSpan(_suggestOverlay, 3);
 
         Content = contentGrid;
 
@@ -558,18 +568,12 @@ public class NeteaseOnlineMusicPage : ContentPage
     {
         if (w <= 0) return;
 
-        int span = w switch
-        {
-            < 600 => 2,
-            < 900 => 3,
-            < 1200 => 4,
-            < 1500 => 5,
-            _ => 6,
-        };
-        if (_playlistsLayout.Span != span) _playlistsLayout.Span = span;
+        // ① 歌单网格：列数由卡片定宽推导（不固定列数），见 UpdatePlaylistColumns
+        UpdatePlaylistColumns(w);
 
-        // 横屏（宽明显大于高）：搜索框/chips 并入头部行，释放一整行纵向空间
-        double h = contentGrid.Height;
+        // ② 横屏（宽明显大于高）：搜索框/chips 并入头部行，释放一整行纵向空间。
+        // 首次布局时 contentGrid.Height 可能为 0，用窗口高度兜底（SizeChanged 后以实际高度修正）
+        double h = contentGrid.Height > 0 ? contentGrid.Height : contentGrid.Window?.Height ?? 0;
         bool landscape = h > 0 && w > h * 1.2;
         if (landscape != _isLandscape)
         {
@@ -578,25 +582,50 @@ public class NeteaseOnlineMusicPage : ContentPage
             else RestoreSearchRow();
         }
 
-        // 横屏或宽屏（≥900）：入口卡片一行五列、歌曲/歌手双列通栏
+        // ③ 横屏或宽屏（≥900）：入口卡片一行五列、歌曲/歌手多列网格
         bool wide = w >= 900 || landscape;
         if (wide != _isWideLayout)
         {
             _isWideLayout = wide;
-            if (wide) ApplyWideLayout();
+            if (wide) ApplyWideLayout(w);
             else ApplyNarrowLayout();
         }
+        if (wide) UpdateListColumns(w);
 
-        // 宽屏内歌曲/歌手列表按宽度自适应列数
-        if (wide)
-        {
-            int listSpan = w switch { < 1100 => 2, < 1500 => 3, _ => 4 };
-            if (_songsGridLayout.Span != listSpan) _songsGridLayout.Span = listSpan;
-            if (_artistsGridLayout.Span != listSpan) _artistsGridLayout.Span = listSpan;
-        }
-
-        // 入口卡片：横屏/宽屏正方形（高度 = 列宽）；竖屏窄屏为横屏卡片的四分之一高度（紧凑单行）
+        // ④ 入口卡片：横屏/宽屏正方形（高度 = 列宽，封顶 126）；竖屏窄屏为横屏卡片的四分之一高度
         UpdateEntryCardHeights(w);
+    }
+
+    /// <summary>歌单网格列数 = 可用宽度 / 卡片定宽（200px 含间距），不固定列数。
+    /// WinUI 上修改 GridItemsLayout.Span 不重建 ItemsPanel（宽屏实测停留初始 2 列），
+    /// 须整建 ItemsLayout 实例重新赋值；跨档重建会重置滚动位置（仅宽度跨档时发生，可接受）。</summary>
+    private void UpdatePlaylistColumns(double w)
+    {
+        double available = w - 32; // 左右 16px margin
+        int span = Math.Clamp((int)((available + 10) / (PlaylistCardWidth + 10)), 2, 8);
+        if (span == _playlistSpan && _playlistsView.ItemsLayout is GridItemsLayout) return;
+        _playlistSpan = span;
+        _playlistsView.ItemsLayout = new GridItemsLayout(span, ItemsLayoutOrientation.Vertical)
+        {
+            HorizontalItemSpacing = 10,
+            VerticalItemSpacing = 10,
+        };
+    }
+
+    /// <summary>宽屏下歌曲/歌手网格列数 = 可用宽度 / 卡片定宽（330px 含间距），同样须整建 ItemsLayout。</summary>
+    private void UpdateListColumns(double w)
+    {
+        double available = w - 32;
+        int span = Math.Clamp((int)((available + 10) / (ListCardWidth + 10)), 2, 6);
+        if (span == _listSpan && _songsView.ItemsLayout is GridItemsLayout) return;
+        _listSpan = span;
+        var grid = new GridItemsLayout(span, ItemsLayoutOrientation.Vertical)
+        {
+            HorizontalItemSpacing = 10,
+            VerticalItemSpacing = 10,
+        };
+        _songsView.ItemsLayout = grid;
+        _artistsView.ItemsLayout = grid;
     }
 
     /// <summary>入口卡片尺寸与布局：横屏/宽屏正方形（高度 = 列宽，超大屏封顶）；竖屏窄屏高度 = 横屏卡片四分之一。</summary>
@@ -606,7 +635,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         if (!_isWideLayout)
         {
             // 竖屏窄屏：横屏卡片高度（按估算横屏宽度 2w 计算）的四分之一，约 32-37px，最小 35px
-            double landscapeCard = Math.Min((2 * w - 72) / 5, 150);
+            double landscapeCard = Math.Min((2 * w - 72) / 5, 126);
             double h = Math.Max(landscapeCard / 4, 35);
             foreach (var card in cards)
             {
@@ -617,7 +646,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         }
         double cardWidth = (w - 32 - 4 * 10) / 5; // 宽屏：5 列，4 个 10px 间距
         if (cardWidth <= 0) return;
-        double cardHeight = Math.Min(cardWidth, 150);
+        double cardHeight = Math.Min(cardWidth, 126);
         foreach (var card in cards)
         {
             card.HeightRequest = cardHeight;
@@ -661,8 +690,8 @@ public class NeteaseOnlineMusicPage : ContentPage
         card.Content = l.Stack;
     }
 
-    /// <summary>宽屏（≥900 或横屏）：搜索行合一、入口卡片一行五列、歌曲/歌手双列通栏。</summary>
-    private void ApplyWideLayout()
+    /// <summary>宽屏（≥900 或横屏）：搜索行合一、入口卡片一行五列、歌曲/歌手多列网格。</summary>
+    private void ApplyWideLayout(double w)
     {
         // 搜索行：一行两列 [Entry | chips]（横屏时搜索元素在头部行，此配置供恢复竖屏使用）
         searchRowGrid.RowDefinitions.Clear();
@@ -694,9 +723,8 @@ public class NeteaseOnlineMusicPage : ContentPage
         SetEntryCardCell(myCard, 0, 3);
         SetEntryCardCell(recommendCard, 0, 4);
 
-        // 歌曲/歌手双列通栏
-        _songsView.ItemsLayout = _songsGridLayout;
-        _artistsView.ItemsLayout = _artistsGridLayout;
+        // 歌曲/歌手多列网格（卡片定宽推导列数，WinUI 须整建 ItemsLayout）
+        UpdateListColumns(w);
     }
 
     /// <summary>窄屏（&lt;900 且非横屏）：搜索框在上 chips 在下、入口卡片两列三行、列表单列。</summary>
@@ -777,6 +805,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchModesScroll.VerticalOptions = LayoutOptions.Center;
         searchModesLayout.Padding = new Thickness(0);
         headerGrid.Padding = new Thickness(16, 6, 16, 6);
+
+        // 联想浮层上移至头部行正下方（搜索行已隐藏，行 1 折叠为 0 高，浮层从行 1 起覆盖）
+        Grid.SetRow(_suggestOverlay, 1);
+        Grid.SetRowSpan(_suggestOverlay, 4);
     }
 
     /// <summary>恢复竖屏：搜索框/chips 回到搜索行，头部行恢复标题。</summary>
@@ -802,6 +834,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchRowGrid.Children.Add(searchBorder);
         searchRowGrid.Children.Add(searchModesScroll);
         searchRowGrid.IsVisible = true;
+
+        // 联想浮层回到搜索行下方（行 1 搜索框本身不被遮挡）
+        Grid.SetRow(_suggestOverlay, 2);
+        Grid.SetRowSpan(_suggestOverlay, 3);
     }
 
     private async Task OpenSimilarPlaylistsAsync()

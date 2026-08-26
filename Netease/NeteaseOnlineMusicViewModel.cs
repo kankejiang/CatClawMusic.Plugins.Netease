@@ -731,7 +731,18 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     /// <summary>搜索联想/热词条目（输入＝歌曲/专辑/歌手建议；空输入＝热门搜索）</summary>
     public ObservableCollection<SearchSuggestion> SuggestItems { get; } = new();
 
-    [ObservableProperty] private bool _isSuggestVisible;
+    /// <summary>搜索框是否聚焦（页面 Entry.Focused/Unfocused 维护）：联想浮层仅聚焦时出现</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSuggestVisible))]
+    private bool _isSearchFocused;
+
+    /// <summary>联想/热词数据是否就绪</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSuggestVisible))]
+    private bool _hasSuggestData;
+
+    /// <summary>联想浮层可见性：聚焦且有数据（桌面空输入不再常驻热词占一整行）</summary>
+    public bool IsSuggestVisible => IsSearchFocused && HasSuggestData;
 
     /// <summary>输入变化：防抖加载联想词；空则加载热门搜索</summary>
     public async Task OnSearchTextChangedAsync(string? text)
@@ -748,21 +759,21 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                 if (cts.IsCancellationRequested) return;
                 SuggestItems.Clear();
                 foreach (var w in hot) SuggestItems.Add(new SearchSuggestion { Word = w, Type = "hot" });
-                IsSuggestVisible = hot.Count > 0;
+                HasSuggestData = hot.Count > 0;
             }
             else
             {
                 await Task.Delay(280, cts.Token);
                 var sug = await _plugin.GetSearchSuggestAsync(q, 8);
                 if (cts.IsCancellationRequested) return;
-                if (sug.Count == 0) { IsSuggestVisible = false; return; }
+                if (sug.Count == 0) { HasSuggestData = false; return; }
                 SuggestItems.Clear();
                 foreach (var s in sug) SuggestItems.Add(s);
-                IsSuggestVisible = true;
+                HasSuggestData = true;
             }
         }
         catch (TaskCanceledException) { }
-        catch { IsSuggestVisible = false; }
+        catch { HasSuggestData = false; }
     }
 
     /// <summary>点击联想/热词：填入搜索框并搜索</summary>
@@ -772,12 +783,14 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         if (item is not SearchSuggestion s || string.IsNullOrWhiteSpace(s.Word)) return;
         SearchQuery = s.Word;
         SuggestItems.Clear();
-        IsSuggestVisible = false;
+        // 视作失焦收起浮层（SearchQuery 触发的异步联想加载不会让浮层重新弹出）
+        IsSearchFocused = false;
+        HasSuggestData = false;
         await SearchSongsAsync();
     }
 
     /// <summary>手动触发搜索时收起联想浮层</summary>
-    private void DismissSuggest() { SuggestItems.Clear(); IsSuggestVisible = false; }
+    private void DismissSuggest() { SuggestItems.Clear(); HasSuggestData = false; }
 
     // ── 播放 ──
 

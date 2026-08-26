@@ -193,7 +193,7 @@ public class NeteaseOpenApiClient
                     Id = t.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
                     Platform = "netease",
                     Name = t.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    CoverUrl = CoverWithSize(ToHttps(t.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null), 500),
+                    CoverUrl = CoverWithSize(ToHttps(t.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null), 300),
                     Description = t.TryGetProperty("description", out var d) ? d.GetString() : null,
                     SongCount = t.TryGetProperty("total", out var tc) ? tc.GetInt32() : 0,
                 });
@@ -1329,7 +1329,7 @@ public class NeteaseOpenApiClient
             Id = pl.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
             Platform = "netease",
             Name = pl.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-            CoverUrl = CoverWithSize(ToHttps(cover), 500),
+            CoverUrl = CoverWithSize(ToHttps(cover), 300),
             Description = pl.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null,
             SongCount = pl.TryGetProperty("trackCount", out var tc) && tc.TryGetInt32(out var tcv) ? tcv : 0,
         };
