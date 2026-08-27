@@ -196,6 +196,63 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     /// <summary>歌单列表</summary>
     public ObservableCollection<OnlinePlaylist> Playlists { get; } = new();
 
+    // ── 歌单分块网格（WinUI 上 GridItemsLayout.Span 不可靠：集合 Reset/重新虚拟化后项按
+    //    整窗宽测量、单张占满一行；宿主 ChunkGridHelper 的折中方案）──
+    //    外层 CollectionView 虚拟化「行」，每行水平排 N 张定宽卡片，列数按可用宽度推导。
+
+    /// <summary>歌单网格行（一行不超过 N 张卡片，N = 当前列数）</summary>
+    public sealed class PlaylistGridRow
+    {
+        public ObservableCollection<object> Items { get; } = new();
+    }
+
+    /// <summary>歌单分块行（供 CollectionView 虚拟化）</summary>
+    public ObservableCollection<PlaylistGridRow> PlaylistRows { get; } = new();
+
+    public const double PlaylistCardWidth = 200;
+    private const double PlaylistCardSpacing = 10;
+    private int _playlistGridSpan = 2;
+    private int _playlistChunkedCount;
+
+    /// <summary>页面布局回调：按可用宽度推导歌单网格列数（跨档时重新分块）</summary>
+    public void SetPlaylistGridWidth(double availableWidth)
+    {
+        if (availableWidth <= 0) return;
+        var span = (int)Math.Floor((availableWidth + PlaylistCardSpacing) / (PlaylistCardWidth + PlaylistCardSpacing));
+        span = Math.Clamp(span, 2, 8);
+        if (span == _playlistGridSpan) return;
+        _playlistGridSpan = span;
+        RechunkPlaylists();
+    }
+
+    /// <summary>全部重新分块（列数变化或 Playlists 重置）</summary>
+    private void RechunkPlaylists()
+    {
+        PlaylistRows.Clear();
+        _playlistChunkedCount = 0;
+        AppendPlaylistChunk();
+    }
+
+    /// <summary>增量分块：把 Playlists 中尚未入块的条目追加到行尾（分页加载不清空，滚动位置保留）</summary>
+    private void AppendPlaylistChunk()
+    {
+        PlaylistGridRow? row = PlaylistRows.Count > 0 ? PlaylistRows[^1] : null;
+        for (int i = _playlistChunkedCount; i < Playlists.Count; i++)
+        {
+            if (row == null || row.Items.Count >= _playlistGridSpan)
+            {
+                row = new PlaylistGridRow();
+                PlaylistRows.Add(row);
+            }
+            row.Items.Add(Playlists[i]);
+            _playlistChunkedCount++;
+        }
+    }
+
+    /// <summary>分块网格模式下卡片点击打开歌单（卡片直接挂点击命令，不走列表 SelectionChanged）</summary>
+    [RelayCommand]
+    public Task OpenPlaylistCard(object? item) => OpenPlaylistAsync(item as OnlinePlaylist);
+
     [ObservableProperty]
     private string _playlistStatus = "";
 
@@ -247,6 +304,12 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         _audioPlayer = audioPlayer;
         _services = services;
         Songs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPlaylistSongs));
+        // 歌单分块网格投影：分页 Add 增量入块（保留滚动位置），重置/移除则整体重新分块
+        Playlists.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add) AppendPlaylistChunk();
+            else RechunkPlaylists();
+        };
         _audioPlayer.PlaybackCompleted += OnAudioPlaybackCompleted;
         _audioPlayer.PlaybackStateChanged += OnPlaybackStateChanged;
         _qualityLevel = _plugin.QualityLevel;
