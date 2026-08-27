@@ -301,8 +301,7 @@ public static class NeteaseUiKit
         // 分块网格模式下卡片以点击命令打开（外层行 SelectionMode=None，点击不落在列表选择上）
         if (tapCommand != null)
         {
-            var tap = new TapGestureRecognizer();
-            tap.SetBinding(TapGestureRecognizer.CommandProperty, new Binding(".", source: tapCommand));
+            var tap = new TapGestureRecognizer { Command = tapCommand };
             tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
             card.GestureRecognizers.Add(tap);
         }
