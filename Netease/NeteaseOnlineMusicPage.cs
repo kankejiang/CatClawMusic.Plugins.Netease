@@ -541,8 +541,8 @@ public class NeteaseOnlineMusicPage : ContentPage
     {
         if (w <= 0) return;
 
-        // ① 歌单分块网格列数（VM 按卡片定宽推导，跨档重新分块）
-        _vm.SetPlaylistGridWidth(w - 32); // 左右 16px margin
+        // ① 歌单分块网格列数（VM 按卡片定宽推导，跨档重新分块；预留 44 = 左右 margin 32 + 滚动条 12）
+        _vm.SetPlaylistGridWidth(w - 44);
 
         // ② 横屏（宽明显大于高）：搜索框/chips 并入头部行，释放一整行纵向空间。
         // 首次布局时 contentGrid.Height 可能为 0，用窗口高度兜底（窗口高含标题栏/播放器，
@@ -570,13 +570,14 @@ public class NeteaseOnlineMusicPage : ContentPage
     }
 
     /// <summary>歌单网格视图：外层 CollectionView 虚拟化「行」（LinearItemsLayout），
-    /// 每行 FlexLayout 水平排 N 张定宽卡片。列数由 VM.SetPlaylistGridWidth 按宽度推导。
+    /// 每行 HorizontalStackLayout 水平排 N 张定宽卡片。列数由 VM.SetPlaylistGridWidth 按宽度推导。
     /// 卡片挂点击命令打开歌单（行 SelectionMode=None）。</summary>
     private CollectionView CreatePlaylistsView()
     {
         var view = new CollectionView
         {
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            ItemsUpdatingScrollMode = ItemsUpdatingScrollMode.KeepScrollOffset,
             SelectionMode = SelectionMode.None,
             Margin = new Thickness(16, 6, 16, 0),
             RemainingItemsThreshold = 6,
@@ -588,15 +589,15 @@ public class NeteaseOnlineMusicPage : ContentPage
         return view;
     }
 
-    /// <summary>歌单分块行模板：一行 FlexLayout(NoWrap) + BindableLayout 装卡片</summary>
+    /// <summary>歌单分块行模板：一行 HorizontalStackLayout + BindableLayout 装定宽卡片。
+    /// 不能用 FlexLayout：行内 Items 为 ObservableCollection（分页增量追加），
+    /// BindableLayout 响应 Add 在布局中途插入子项，FlexLayout 测量节点缓存失步 → Layout NRE；
+    /// HorizontalStackLayout 每趟直接遍历 Children，中途增删安全。</summary>
     private View CreatePlaylistRowTemplate()
     {
-        var row = new FlexLayout
+        var row = new HorizontalStackLayout
         {
-            Direction = FlexDirection.Row,
-            Wrap = FlexWrap.NoWrap,
-            JustifyContent = FlexJustify.Start,
-            AlignItems = FlexAlignItems.Start,
+            Spacing = 10,
             Margin = new Thickness(0, 0, 0, 10),
         };
         BindableLayout.SetItemTemplate(row, new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate(
