@@ -65,7 +65,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.9";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.10";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
@@ -195,25 +195,30 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(OnlineSong song)
         => _client.GetLyricsAsync(song.Id);
 
+    /// <summary>三流歌词（lrc + 译文 + 罗马音）。宿主歌词链优先调本方法：
+    /// LyricsService 拿到 RLrc 后写入 RomaLines 并以 300ms 容差并入各行 Roma 字段。</summary>
+    public Task<(string? Lrc, string? TLrc, string? RLrc)?> GetLyricsWithRomaAsync(OnlineSong song)
+        => _client.GetLyricsWithRomaAsync(song.Id);
+
     // ── ILyricsProviderPlugin：让宿主歌词链（Navidrome > 同名.lrc > 嵌入 > 插件）能消费在线歌词 ──
-    // 宿主按 RemoteId("netease:{id}") 路由；当前构建未接 IOnlineMusicPlugin 歌词链，
-    // 但 ILyricsProviderPlugin 已是宿主兜底链末级，实现它即可在当前宿主直接显示在线歌词。
+    // 宿主按 RemoteId("netease:{id}") 路由；IOnlineMusicPlugin 未命中（无罗马音接口或平台不匹配）时，
+    // ILyricsProviderPlugin 兜底链仍会把本插件解析好的行级译文/罗马音直接返回给宿主。
 
     /// <summary>歌词服务可用（仅需登录态由 Cookie 增强，匿名也能取大部分词）</summary>
     public bool IsAvailable => true;
 
     /// <summary>
     /// 宿主歌词兜底链调用：从 <paramref name="song"/>.RemoteId 解析网易云 songId，
-    /// 拉取 LRC（+翻译）并解析为结构化 <see cref="LrcLyrics"/> 返回。
+    /// 拉取 LRC（+翻译+罗马音）并解析为结构化 <see cref="LrcLyrics"/> 返回。
     /// </summary>
     public async Task<LrcLyrics?> GetLyricsAsync(Song song)
     {
         if (song?.RemoteId == null) return null;
         var id = ExtractNeteaseId(song.RemoteId);
         if (string.IsNullOrWhiteSpace(id)) return null;
-        var pair = await _client.GetLyricsAsync(id);
-        if (pair == null || string.IsNullOrWhiteSpace(pair.Value.Lrc)) return null;
-        return ParseNeteaseLyrics(pair.Value.Lrc, pair.Value.TLrc);
+        var trio = await _client.GetLyricsWithRomaAsync(id);
+        if (trio == null || string.IsNullOrWhiteSpace(trio.Value.Lrc)) return null;
+        return ParseNeteaseLyrics(trio.Value.Lrc, trio.Value.TLrc, trio.Value.RLrc);
     }
 
     /// <summary>从 "netease:12345" 形式 RemoteId 提取 songId</summary>
@@ -224,35 +229,58 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     }
 
     /// <summary>
-    /// 解析网易云 LRC（+翻译）为 <see cref="LrcLyrics"/>。
-    /// lrc/tlyric 是两份独立标准 LRC，按时间戳把翻译挂到对应原词行；元数据行（[ti:]/[ar:]）忽略。
+    /// 解析网易云 LRC（+翻译+罗马音）为 <see cref="LrcLyrics"/>。
+    /// lrc/tlyric/romalrc 是三份独立标准 LRC，按时间戳挂到对应原词行；元数据行（[ti:]/[ar:]）忽略。
+    /// 译文/罗马音时间戳与原文常有毫秒级偏差（网易云三流独立上传），
+    /// 精确相等匹配会大量丢失 → 与宿主 LyricsService.MergeExtendedLines 同款 300ms 容差。
     /// 自带最小解析器，避免依赖宿主 LyricsService 实例（插件取不到其服务）。
     /// </summary>
-    private static LrcLyrics? ParseNeteaseLyrics(string lrc, string? tlyric)
+    private static LrcLyrics? ParseNeteaseLyrics(string lrc, string? tlyric, string? rlrc)
     {
         var main = ParseRawLrc(lrc);
         if (main == null || main.Count == 0) return null;
-        Dictionary<TimeSpan, string>? trans = null;
-        if (!string.IsNullOrWhiteSpace(tlyric))
-        {
-            var t = ParseRawLrc(tlyric);
-            if (t != null)
-            {
-                trans = new Dictionary<TimeSpan, string>();
-                foreach (var (ts, text) in t)
-                    if (!trans.ContainsKey(ts)) trans[ts] = text; // 重复时间戳以首个为准，避免 ToDictionary 抛异常
-            }
-        }
+        var trans = ParseExtStream(tlyric);
+        var roma = ParseExtStream(rlrc);
+
         var lines = new List<LrcLyricLine>();
         foreach (var (ts, text) in main)
         {
             var line = new LrcLyricLine { Timestamp = ts, Text = text };
-            if (trans != null && trans.TryGetValue(ts, out var tr) && !string.IsNullOrWhiteSpace(tr))
-                line.Translation = tr;
+            line.Translation = FindNearest(trans, ts);
+            line.Roma = FindNearest(roma, ts);
             lines.Add(line);
         }
         lines.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
         return new LrcLyrics { Lines = lines };
+    }
+
+    /// <summary>解析译文/罗马音外挂流；重复时间戳以首个为准。</summary>
+    private static List<(TimeSpan Ts, string Text)>? ParseExtStream(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var list = ParseRawLrc(raw);
+        if (list == null || list.Count == 0) return null;
+        var seen = new HashSet<TimeSpan>();
+        return list.Where(x => seen.Add(x.Ts)).ToList();
+    }
+
+    /// <summary>300ms 容差找最近行文本（对齐宿主 MergeExtendedLines.FindLineAt 语义）。</summary>
+    private static string? FindNearest(List<(TimeSpan Ts, string Text)>? stream, TimeSpan ts)
+    {
+        if (stream == null) return null;
+        (TimeSpan Ts, string Text) best = default;
+        double bestDelta = 300;
+        foreach (var entry in stream)
+        {
+            var delta = Math.Abs((entry.Ts - ts).TotalMilliseconds);
+            if (delta < bestDelta)
+            {
+                bestDelta = delta;
+                best = entry;
+            }
+        }
+        var text = best.Text;
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     /// <summary>解析单份 LRC 文本为 (时间戳, 文本) 列表（同一行多时间戳会展开为多行）</summary>
