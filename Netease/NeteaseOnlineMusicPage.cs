@@ -439,14 +439,32 @@ public class NeteaseOnlineMusicPage : ContentPage
 
         Content = contentGrid;
 
-        // 尺寸变化时调整响应式布局（桌面嵌入模式下页面 SizeChanged 不触发，改挂 contentGrid）
-        contentGrid.SizeChanged += (_, _) => ApplyResponsiveLayout(contentGrid.Width);
+        // 尺寸变化时调整响应式布局（桌面嵌入模式下页面 SizeChanged 不触发，改挂 contentGrid）。
+        // WinUI 上 SizeChanged 触发时 contentGrid.Width 常仍为 0（布局未完成），
+        // Dispatch 到下一帧再读 Width，此时布局确定完成
+        contentGrid.SizeChanged += (_, _) => contentGrid.Dispatcher?.Dispatch(() => ApplyResponsiveLayout(contentGrid.Width));
+        // handler 挂载后延迟重试（首次布局完成后 Width 才有值，覆盖 SizeChanged 拿到 0 的场景）
+        contentGrid.HandlerChanged += (_, _) => contentGrid.Dispatcher?.Dispatch(async () =>
+        {
+            ApplyResponsiveLayout(contentGrid.Width);
+            if (contentGrid.Width <= 0)
+            {
+                await Task.Delay(300);
+                ApplyResponsiveLayout(contentGrid.Width);
+            }
+        });
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        ApplyResponsiveLayout(Content?.Width ?? 0);
+        // 嵌入模式下 Content.Width 此时多为 0，用 contentGrid.Width + 延迟重试兜底
+        ApplyResponsiveLayout(contentGrid.Width);
+        if (contentGrid.Width <= 0)
+        {
+            await Task.Delay(300);
+            ApplyResponsiveLayout(contentGrid.Width);
+        }
         await _vm.OnAppearingAsync();
     }
 
@@ -531,9 +549,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         UpdatePlaylistColumns(w);
 
         // ② 横屏（宽明显大于高）：搜索框/chips 并入头部行，释放一整行纵向空间。
-        // 首次布局时 contentGrid.Height 可能为 0，用窗口高度兜底（SizeChanged 后以实际高度修正）
+        // 首次布局时 contentGrid.Height 可能为 0，用窗口高度兜底（窗口高含标题栏/播放器，
+        // 判定阈值放宽到 1.05 补偿，避免横屏窗口因 h 偏大而判定失败）
         double h = contentGrid.Height > 0 ? contentGrid.Height : contentGrid.Window?.Height ?? 0;
-        bool landscape = h > 0 && w > h * 1.2;
+        bool landscape = h > 0 && w > h * 1.05;
         if (landscape != _isLandscape)
         {
             _isLandscape = landscape;
