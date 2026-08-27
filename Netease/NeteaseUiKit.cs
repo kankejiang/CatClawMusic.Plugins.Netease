@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
+using System.Windows.Input;
 using CatClawMusic.Core.Models;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Shapes;
@@ -251,13 +252,13 @@ public static class NeteaseUiKit
     // ── 歌单卡片模板 ──
 
     /// <summary>歌单卡片：封面 + 名称（两行）+ 首数/描述（一行）。封面已带裁尺寸参数。</summary>
-    public static View CreatePlaylistItemTemplate()
+    public static View CreatePlaylistItemTemplate(double? cardWidth = null, ICommand? tapCommand = null)
     {
         var coverBorder = new Border
         {
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 12 },
-            HeightRequest = 150,
+            HeightRequest = cardWidth is > 0 ? cardWidth.Value - 10 : 150,
         };
         coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var coverImage = new Image { Aspect = Aspect.AspectFill, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
@@ -288,6 +289,7 @@ public static class NeteaseUiKit
             Padding = new Thickness(0),
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            WidthRequest = cardWidth ?? -1,
         };
         card.SetDynamicResource(Border.BackgroundColorProperty, "CardBackgroundColor");
         card.Content = new VerticalStackLayout
@@ -295,6 +297,15 @@ public static class NeteaseUiKit
             Spacing = 6,
             Children = { coverBorder, nameLabel, countLabel },
         };
+
+        // 分块网格模式下卡片以点击命令打开（外层行 SelectionMode=None，点击不落在列表选择上）
+        if (tapCommand != null)
+        {
+            var tap = new TapGestureRecognizer();
+            tap.SetBinding(TapGestureRecognizer.CommandProperty, new Binding(".", source: tapCommand));
+            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            card.GestureRecognizers.Add(tap);
+        }
         return card;
     }
 

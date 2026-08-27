@@ -41,20 +41,14 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly Border myCard;
     private readonly Border recommendCard;
 
-    // 响应式布局状态（宽屏 ≥900：入口卡片一行、歌曲/歌手多列、搜索行合一）
+    // 响应式布局状态（宽屏 ≥900：入口卡片一行、搜索行合一）
     private bool _isWideLayout;
     private bool _isLandscape;
-
-    // 列数不固定：由卡片定宽按可用宽度推导（约 200px/卡）。跨档变化时整建 CollectionView
-    private const double PlaylistCardWidth = 200;
-    private const double ListCardWidth = 330;
-    private int _playlistSpan = 2;
-    private int _listSpan; // 0 = 线性单列（窄屏），>0 = 网格列数
 
     // 搜索联想浮层（横竖屏切换需要重排行列归属）
     private readonly Border _suggestOverlay;
 
-    // 歌曲列表头（含返回/标题/播放全部等，整建 _songsView 时随迁）
+    // 歌曲列表头（含返回/标题/播放全部等）
     private readonly Grid _songsHeader;
 
     // 头部行控件（横屏时搜索框/chips 并入头部行，需要重排行列归属）
@@ -254,11 +248,13 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         categoriesScroll.SetBinding(ScrollView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
 
-        // ── 歌单网格（分页加载；初始 2 列，首次布局按定宽推导列数整建）──
-        _playlistsView = CreatePlaylistsView(_playlistSpan);
+        // ── 歌单网格（分页加载；分块行方案：外层虚拟化「行」，每行 N 张定宽卡片，
+        //    列数由 VM 按可用宽度推导。WinUI 上 GridItemsLayout.Span 不可靠，
+        //    集合 Reset/重新虚拟化后项按整窗宽测量、单张占满一行）──
+        _playlistsView = CreatePlaylistsView();
 
-        // ── 歌手列表（搜索歌手模式；初始线性，宽屏整建为网格）──
-        _artistsView = CreateArtistsView(_listSpan);
+        // ── 歌手列表（搜索歌手模式；纯线性）──
+        _artistsView = CreateArtistsView();
 
         // ── 歌曲列表模式 ──
         var songsBackButton = new Border
@@ -352,8 +348,8 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetColumn(similarButton, 4);
         _songsHeader = songsHeader;
 
-        // 歌曲列表（初始线性，宽屏整建为网格；Header 随迁避免 Grid Row 5 多元素重叠渲染）
-        _songsView = CreateSongsView(_listSpan);
+        // 歌曲列表（纯线性；Header 与视图同生命周期）
+        _songsView = CreateSongsView();
 
         // ── 加载指示器 ──
         _loadingIndicator = new ActivityIndicator
@@ -540,13 +536,13 @@ public class NeteaseOnlineMusicPage : ContentPage
         });
     }
 
-    /// <summary>响应式布局：按可用宽度设置歌单列数、搜索行与歌曲/歌手列表列数；横屏时搜索框并入头部行。</summary>
+    /// <summary>响应式布局：按可用宽度推导歌单网格列数、横竖屏搜索行与入口卡片排布。</summary>
     private void ApplyResponsiveLayout(double w)
     {
         if (w <= 0) return;
 
-        // ① 歌单网格：列数由卡片定宽推导（不固定列数），见 UpdatePlaylistColumns
-        UpdatePlaylistColumns(w);
+        // ① 歌单分块网格列数（VM 按卡片定宽推导，跨档重新分块）
+        _vm.SetPlaylistGridWidth(w - 32); // 左右 16px margin
 
         // ② 横屏（宽明显大于高）：搜索框/chips 并入头部行，释放一整行纵向空间。
         // 首次布局时 contentGrid.Height 可能为 0，用窗口高度兜底（窗口高含标题栏/播放器，
@@ -560,7 +556,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             else RestoreSearchRow();
         }
 
-        // ③ 横屏或宽屏（≥900）：入口卡片一行五列、歌曲/歌手多列网格
+        // ③ 横屏或宽屏（≥900）：入口卡片一行五列
         bool wide = w >= 900 || landscape;
         if (wide != _isWideLayout)
         {
@@ -569,82 +565,53 @@ public class NeteaseOnlineMusicPage : ContentPage
             else ApplyNarrowLayout();
         }
 
-        // ④ 歌曲/歌手列表列数（窄屏 0 = 线性单列），跨档整建视图
-        UpdateListColumns(w);
-
-        // ⑤ 入口卡片：横屏/宽屏正方形（高度 = 列宽，封顶 126）；竖屏窄屏为横屏卡片的四分之一高度
+        // ④ 入口卡片：横屏/宽屏正方形（高度 = 列宽，封顶 126）；竖屏窄屏为横屏卡片的四分之一高度
         UpdateEntryCardHeights(w);
     }
 
-    /// <summary>歌单网格列数 = 可用宽度 / 卡片定宽（200px 含间距），不固定列数。
-    /// WinUI 运行时改 Span 或换 ItemsLayout 实例均不生效（ItemsPanel 在 handler 挂载时
-    /// 固化），跨档时整建 CollectionView 替换；重建会重置滚动位置（仅宽度跨档时发生，可接受）。</summary>
-    private void UpdatePlaylistColumns(double w)
-    {
-        double available = w - 32; // 左右 16px margin
-        int span = Math.Clamp((int)((available + 10) / (PlaylistCardWidth + 10)), 2, 8);
-        if (span == _playlistSpan) return;
-        _playlistSpan = span;
-        _playlistsView = ReplaceCollectionView(_playlistsView, CreatePlaylistsView(span), 4);
-    }
-
-    /// <summary>歌曲/歌手列表列数：窄屏 0（线性单列），宽屏 = 可用宽度 / 卡片定宽（330px），跨档整建视图。</summary>
-    private void UpdateListColumns(double w)
-    {
-        int target = 0;
-        if (_isWideLayout)
-        {
-            double available = w - 32;
-            target = Math.Clamp((int)((available + 10) / (ListCardWidth + 10)), 2, 6);
-        }
-        if (target == _listSpan) return;
-        _listSpan = target;
-        _songsView = ReplaceCollectionView(_songsView, CreateSongsView(target), 4);
-        _artistsView = ReplaceCollectionView(_artistsView, CreateArtistsView(target), 4);
-    }
-
-    /// <summary>整建替换 CollectionView：WinUI 上 ItemsLayout 仅构造期赋值被消费，列数变化须换新实例。
-    /// 在 contentGrid 原索引位替换，保持浮层等后置元素层级在最上。</summary>
-    private CollectionView ReplaceCollectionView(CollectionView oldView, CollectionView newView, int row)
-    {
-        var idx = contentGrid.Children.IndexOf(oldView);
-        if (idx < 0) contentGrid.Children.Add(newView);
-        else
-        {
-            contentGrid.Children.RemoveAt(idx);
-            contentGrid.Children.Insert(idx, newView);
-        }
-        Grid.SetRow(newView, row);
-        return newView;
-    }
-
-    /// <summary>歌单网格视图（span 列）</summary>
-    private CollectionView CreatePlaylistsView(int span)
+    /// <summary>歌单网格视图：外层 CollectionView 虚拟化「行」（LinearItemsLayout），
+    /// 每行 FlexLayout 水平排 N 张定宽卡片。列数由 VM.SetPlaylistGridWidth 按宽度推导。
+    /// 卡片挂点击命令打开歌单（行 SelectionMode=None）。</summary>
+    private CollectionView CreatePlaylistsView()
     {
         var view = new CollectionView
         {
-            ItemsLayout = new GridItemsLayout(span, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 },
-            SelectionMode = SelectionMode.Single,
+            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            SelectionMode = SelectionMode.None,
             Margin = new Thickness(16, 6, 16, 0),
             RemainingItemsThreshold = 6,
         };
         view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
-        view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Playlists));
-        view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate());
-        view.SelectionChanged += OnPlaylistSelected;
+        view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.PlaylistRows));
+        view.ItemTemplate = new DataTemplate(CreatePlaylistRowTemplate);
         return view;
     }
 
-    /// <summary>歌手列表视图（span=0 线性单列，&gt;0 网格）</summary>
-    private CollectionView CreateArtistsView(int span)
+    /// <summary>歌单分块行模板：一行 FlexLayout(NoWrap) + BindableLayout 装卡片</summary>
+    private View CreatePlaylistRowTemplate()
+    {
+        var row = new FlexLayout
+        {
+            Direction = FlexDirection.Row,
+            Wrap = FlexWrap.NoWrap,
+            JustifyContent = FlexJustify.Start,
+            AlignItems = FlexAlignItems.Start,
+            Margin = new Thickness(0, 0, 0, 10),
+        };
+        BindableLayout.SetItemTemplate(row, new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate(
+            NeteaseOnlineMusicViewModel.PlaylistCardWidth, _vm.OpenPlaylistCardCommand)));
+        row.SetBinding(BindableLayout.ItemsSourceProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.PlaylistGridRow.Items)));
+        return row;
+    }
+
+    /// <summary>歌手列表视图（纯线性，SelectionChanged 打开歌手页）</summary>
+    private CollectionView CreateArtistsView()
     {
         var view = new CollectionView
         {
             SelectionMode = SelectionMode.Single,
-            ItemsLayout = span > 0
-                ? new GridItemsLayout(span, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 }
-                : new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
             Margin = new Thickness(0, 6, 0, 0),
         };
         view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
@@ -654,15 +621,13 @@ public class NeteaseOnlineMusicPage : ContentPage
         return view;
     }
 
-    /// <summary>歌曲列表视图（span=0 线性单列，&gt;0 网格；Header 随迁）</summary>
-    private CollectionView CreateSongsView(int span)
+    /// <summary>歌曲列表视图（纯线性，Header 随视图）</summary>
+    private CollectionView CreateSongsView()
     {
         var view = new CollectionView
         {
             SelectionMode = SelectionMode.Single,
-            ItemsLayout = span > 0
-                ? new GridItemsLayout(span, ItemsLayoutOrientation.Vertical) { HorizontalItemSpacing = 10, VerticalItemSpacing = 10 }
-                : new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
             Margin = new Thickness(0, 6, 0, 0),
             RemainingItemsThreshold = 8,
         };
@@ -682,7 +647,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             CommentCommand = _vm.OpenCommentsCommand,
         }));
         view.SelectionChanged += OnSongSelected;
-        // Header 随迁（与视图同生死，避免 Grid Row 5 多元素重叠渲染，曾导致红条覆盖歌单列表）
+        // Header 与视图同生死，避免 Grid Row 5 多元素重叠渲染（曾导致红条覆盖歌单列表）
         view.Header = _songsHeader;
         return view;
     }
@@ -781,7 +746,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         SetEntryCardCell(toplistCard, 0, 2);
         SetEntryCardCell(myCard, 0, 3);
         SetEntryCardCell(recommendCard, 0, 4);
-        // 歌曲/歌手多列网格由 ApplyResponsiveLayout → UpdateListColumns 统一整建
+        // 歌曲/歌手列表恒为线性单列（GridItemsLayout 在 WinUI 不可靠）
     }
 
     /// <summary>窄屏（&lt;900 且非横屏）：搜索框在上 chips 在下、入口卡片两列三行、列表单列。</summary>
@@ -818,7 +783,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         SetEntryCardCell(toplistCard, 1, 0);
         SetEntryCardCell(myCard, 1, 1);
         SetEntryCardCell(recommendCard, 2, 0);
-        // 列表单列由 ApplyResponsiveLayout → UpdateListColumns 统一整建
+        // 歌曲列表恒为线性单列（GridItemsLayout 在 WinUI 不可靠）
     }
 
     private static void SetEntryCardCell(Border card, int row, int column)
@@ -909,13 +874,6 @@ public class NeteaseOnlineMusicPage : ContentPage
             await NeteaseNav.PushAsync(page);
         }
         catch { }
-    }
-
-    private async void OnPlaylistSelected(object? sender, SelectionChangedEventArgs e)
-    {
-        if (sender is CollectionView cv) cv.SelectedItem = null;
-        if (e.CurrentSelection.FirstOrDefault() is not OnlinePlaylist playlist) return;
-        await _vm.OpenPlaylistAsync(playlist);
     }
 
     private async void OnArtistSelected(object? sender, SelectionChangedEventArgs e)
