@@ -100,8 +100,9 @@ internal static class NeteaseEapi
         catch { return null; }
     }
 
-    /// <summary>eapi 歌词：返回 (Lrc, TLrc)，失败 null（比官方 /api/song/lyric 多 yrc/romalrc 字段，此处取 lrc+tlyric）</summary>
-    public static async Task<(string? Lrc, string? TLrc)?> FetchLyricAsync(HttpClient http, long songId, string? userCookie)
+    /// <summary>eapi 歌词：返回 (Lrc, TLrc, RLrc)，失败 null。
+    /// rv=-1 已请求 romalrc 字段；比官方 /api/song/lyric 多 yrc/romalrc 字段。</summary>
+    public static async Task<(string? Lrc, string? TLrc, string? RLrc)?> FetchLyricAsync(HttpClient http, long songId, string? userCookie)
     {
         var raw = await RequestAsync(http, "/eapi/song/lyric/v1", new Dictionary<string, object>
         {
@@ -113,13 +114,17 @@ internal static class NeteaseEapi
         }, userCookie);
         if (string.IsNullOrWhiteSpace(raw)) return null;
         using var doc = JsonDocument.Parse(raw);
-        string? lrc = null, tlyric = null;
+        string? lrc = null, tlyric = null, rlrc = null;
         if (doc.RootElement.TryGetProperty("lrc", out var ln) && ln.TryGetProperty("lyric", out var lt))
             lrc = lt.GetString();
         if (doc.RootElement.TryGetProperty("tlyric", out var tn) && tn.TryGetProperty("lyric", out var tt))
             tlyric = tt.GetString();
+        if (doc.RootElement.TryGetProperty("romalrc", out var rn) && rn.TryGetProperty("lyric", out var rt))
+            rlrc = rt.GetString();
         if (string.IsNullOrWhiteSpace(lrc)) return null;
-        return (lrc, string.IsNullOrWhiteSpace(tlyric) ? null : tlyric);
+        return (lrc,
+            string.IsNullOrWhiteSpace(tlyric) ? null : tlyric,
+            string.IsNullOrWhiteSpace(rlrc) ? null : rlrc);
     }
 
     /// <summary>eapi 单曲详情批量（/eapi/v3/song/detail，c="[{\"id\":...}]"）；返回解密后的 JSON 文本，失败 null</summary>
