@@ -998,11 +998,11 @@ public class NeteaseOpenApiClient
         return null;
     }
 
-    /// <summary>歌词（LRC + 翻译）。
+    /// <summary>歌词（LRC + 翻译 + 罗马音）。
     /// 优先级：① eapi /eapi/song/lyric/v1（interface.music.163.com 桌面客户端接口，与 music.163.com 不同源限流，
-    /// Lyrico-Plugins 同款实现，实测最稳）→ ② 官方 /api/song/lyric（tv=0）→ ③ 公共 NeteaseCloudMusicApi 实例。
+    /// Lyrico-Plugins 同款实现，实测最稳）→ ② 官方 /api/song/lyric（tv=1 译文 rv=1 罗马音）→ ③ 公共 NeteaseCloudMusicApi 实例。
     /// 官方接口对部分歌曲（风控/匿名限制/新歌）返回空 lrc 时由后两级顶上。</summary>
-    public async Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(string songId)
+    public async Task<(string? Lrc, string? TLrc, string? RLrc)?> GetLyricsWithRomaAsync(string songId)
     {
         if (string.IsNullOrWhiteSpace(songId)) return null;
         // ① eapi 桌面客户端接口（interface.music.163.com，不同源限流；无需匿名会话，实测 song id 可直取）
@@ -1011,7 +1011,7 @@ public class NeteaseOpenApiClient
             var result = await NeteaseEapi.FetchLyricAsync(_http, eapiId, _cookie);
             if (result != null) return result;
         }
-        // ② 官方 /api/song/lyric（tv=0）
+        // ② 官方 /api/song/lyric（lv 原版 tv 译文 rv 罗马音）
         var official = await FetchLyricFromOfficialAsync(songId);
         if (official != null) return official;
         // 兜底 ③：公共 NeteaseCloudMusicApi 实例
@@ -1021,33 +1021,49 @@ public class NeteaseOpenApiClient
             {
                 using var doc = await GetJsonAsync($"{api}/lyric?id={songId}");
                 if (doc == null) continue;
-                string? lrc = null, tlyric = null;
+                string? lrc = null, tlyric = null, rlrc = null;
                 if (doc.RootElement.TryGetProperty("lrc", out var ln) && ln.TryGetProperty("lyric", out var lt))
                     lrc = lt.GetString();
                 if (doc.RootElement.TryGetProperty("tlyric", out var tn) && tn.TryGetProperty("lyric", out var tt))
                     tlyric = tt.GetString();
+                if (doc.RootElement.TryGetProperty("romalrc", out var rn) && rn.TryGetProperty("lyric", out var rt))
+                    rlrc = rt.GetString();
                 if (!string.IsNullOrWhiteSpace(lrc))
-                    return (lrc, string.IsNullOrWhiteSpace(tlyric) ? null : tlyric);
+                    return (lrc,
+                        string.IsNullOrWhiteSpace(tlyric) ? null : tlyric,
+                        string.IsNullOrWhiteSpace(rlrc) ? null : rlrc);
             }
             catch { }
         }
         return null;
     }
 
-    /// <summary>官方 /api/song/lyric 取词（lv=1 原版，tv=0 不请求翻译字段外的冗余版）</summary>
-    private async Task<(string? Lrc, string? TLrc)?> FetchLyricFromOfficialAsync(string songId)
+    /// <summary>旧接口：歌词（LRC + 翻译，无罗马音），转发到三流版本丢弃 RLrc。</summary>
+    public async Task<(string? Lrc, string? TLrc)?> GetLyricsAsync(string songId)
+    {
+        var r = await GetLyricsWithRomaAsync(songId);
+        if (r == null) return null;
+        return (r.Value.Lrc, r.Value.TLrc);
+    }
+
+    /// <summary>官方 /api/song/lyric 取词（lv=1 原版，tv=1 译文，rv=1 罗马音）</summary>
+    private async Task<(string? Lrc, string? TLrc, string? RLrc)?> FetchLyricFromOfficialAsync(string songId)
     {
         try
         {
-            using var doc = await GetJsonAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=1&tv=0");
+            using var doc = await GetJsonAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=1&tv=1&rv=1");
             if (doc == null) return null;
-            string? lrc = null, tlyric = null;
+            string? lrc = null, tlyric = null, rlrc = null;
             if (doc.RootElement.TryGetProperty("lrc", out var ln) && ln.TryGetProperty("lyric", out var lt))
                 lrc = lt.GetString();
             if (doc.RootElement.TryGetProperty("tlyric", out var tn) && tn.TryGetProperty("lyric", out var tt))
                 tlyric = tt.GetString();
+            if (doc.RootElement.TryGetProperty("romalrc", out var rn) && rn.TryGetProperty("lyric", out var rt))
+                rlrc = rt.GetString();
             if (string.IsNullOrWhiteSpace(lrc)) return null;
-            return (lrc, string.IsNullOrWhiteSpace(tlyric) ? null : tlyric);
+            return (lrc,
+                string.IsNullOrWhiteSpace(tlyric) ? null : tlyric,
+                string.IsNullOrWhiteSpace(rlrc) ? null : rlrc);
         }
         catch { return null; }
     }
