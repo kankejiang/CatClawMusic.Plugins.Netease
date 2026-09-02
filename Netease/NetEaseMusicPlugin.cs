@@ -494,6 +494,13 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public Task<HashSet<string>> GetLikedSongIdsAsync()
         => _client.GetLikedSongIdsAsync();
 
+    /// <summary>当前登录用户收藏/红心歌曲（「我喜欢的音乐」完整列表；未登录返回 null）</summary>
+    public async Task<List<OnlineSong>?> GetFavoriteOnlineSongsAsync()
+    {
+        if (!_client.HasCookie) return null; // 未登录不合并
+        return await _client.GetLikedSongsAsync();
+    }
+
     /// <summary>红心/取消红心普通歌曲（需登录）</summary>
     public Task<bool> LikeSongAsync(string songId, bool like)
         => _client.LikeSongAsync(songId, like);

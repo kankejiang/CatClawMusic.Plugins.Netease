@@ -39,6 +39,7 @@ public class NeteaseOpenApiClient
     private long? _userId;
     private string? _likedPlaylistId;
     private HashSet<string>? _likedSongIds;
+    private List<OnlineSong>? _likedSongs;
 
     public NeteaseOpenApiClient()
     {
@@ -88,6 +89,7 @@ public class NeteaseOpenApiClient
             _userId = null;
             _likedPlaylistId = null;
             _likedSongIds = null;
+            _likedSongs = null;
         }
         return Task.CompletedTask;
     }
@@ -157,6 +159,7 @@ public class NeteaseOpenApiClient
         _userId = null;
         _likedPlaylistId = null;
         _likedSongIds = null;
+        _likedSongs = null;
         await Task.CompletedTask;
         try { if (File.Exists(CookieFilePath)) File.Delete(CookieFilePath); } catch { }
         try { if (File.Exists(NicknameFilePath)) File.Delete(NicknameFilePath); } catch { }
@@ -805,6 +808,66 @@ public class NeteaseOpenApiClient
         return set;
     }
 
+    /// <summary>
+    /// 「我喜欢的音乐」完整歌曲列表（需登录；未登录返回空列表）。
+    /// 首页 tracks 最多返回 1000 首；超过部分按 trackIds 逐批补齐，供宿主「我喜欢的」歌单合并展示。
+    /// </summary>
+    public async Task<List<OnlineSong>> GetLikedSongsAsync()
+    {
+        if (_likedSongs != null) return _likedSongs;
+        var list = new List<OnlineSong>();
+        var pid = await GetLikedPlaylistIdAsync();
+        if (pid == null) { _likedSongs = list; return list; }
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/v6/playlist/detail?id={pid}&n=1000&s=0");
+            if (doc != null && doc.RootElement.TryGetProperty("playlist", out var pl) &&
+                pl.ValueKind == JsonValueKind.Object)
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                if (pl.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var t in tracks.EnumerateArray())
+                    {
+                        var s = ParseSong(t);
+                        if (s == null) continue;
+                        if (!seen.Add(s.Id)) continue;
+                        s.Internal ??= new Dictionary<string, object>();
+                        s.Internal["Liked"] = true;
+                        list.Add(s);
+                    }
+                }
+                // 超过 1000 首：trackIds 里有而 tracks 缺失的，批量 song/detail 补齐
+                if (pl.TryGetProperty("trackIds", out var ids) && ids.ValueKind == JsonValueKind.Array)
+                {
+                    var missing = new List<long>();
+                    foreach (var idEl in ids.EnumerateArray())
+                    {
+                        if (idEl.ValueKind == JsonValueKind.Null) continue;
+                        long idv = 0;
+                        if (idEl.TryGetProperty("id", out var i0) && i0.ValueKind != JsonValueKind.Null)
+                            idv = i0.GetInt64();
+                        else if (idEl.TryGetInt64(out var i1)) idv = i1;
+                        if (idv > 0 && seen.Add(idv.ToString())) missing.Add(idv);
+                    }
+                    if (missing.Count > 0)
+                    {
+                        var extra = await FetchSongsByIdsAsync(missing);
+                        foreach (var s in extra)
+                        {
+                            s.Internal ??= new Dictionary<string, object>();
+                            s.Internal["Liked"] = true;
+                        }
+                        list.AddRange(extra);
+                    }
+                }
+            }
+        }
+        catch { }
+        _likedSongs = list;
+        return list;
+    }
+
     /// <summary>红心/取消红心普通歌曲（/api/playlist/manipulate/tracks 增删「我喜欢的音乐」；需登录）</summary>
     public async Task<bool> LikeSongAsync(string songId, bool like)
     {
@@ -834,6 +897,7 @@ public class NeteaseOpenApiClient
             {
                 var set = await GetLikedSongIdsAsync();
                 if (like) set.Add(songId); else set.Remove(songId);
+                _likedSongs = null; // 完整列表缓存失效，下次按最新红心状态重拉
             }
             return ok;
         }
