@@ -18,6 +18,9 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 {
     private readonly NeteaseOpenApiClient _client = new();
 
+    /// <summary>公开网络客户端（VM 订阅 LoginExpired 等事件用）</summary>
+    public NeteaseOpenApiClient ApiClient => _client;
+
     /// <summary>整页 VM 插件级单例（FM 电台常驻，页面开关不影响电台与补货）</summary>
     private static NeteaseOnlineMusicViewModel? _sharedVm;
 
@@ -65,7 +68,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.11";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.12";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
@@ -163,6 +166,17 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
                 QualityLevel = Math.Clamp(q, 0, 2);
         }
         catch { }
+
+        // 登录态长保：启动时静默续期一次（/api/login/token/refresh 换发新 Cookie）。
+        // 运行期会话失效由客户端 GetJsonAsync 的 301 检测自动续期，续期失败才提示重登。
+        // 实现"一次登录长期有效"，避免 MUSIC_U 过期后私人漫游静默降级成游客泛推荐。
+        if (_client.HasCookie)
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await _client.RefreshLoginTokenAsync(); } catch { }
+            });
+        }
         return Task.CompletedTask;
     }
 

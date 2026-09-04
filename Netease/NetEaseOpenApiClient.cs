@@ -17,6 +17,12 @@ public class NeteaseOpenApiClient
     private readonly HttpClient _http;
     private string? _cookie;
 
+    /// <summary>登录态彻底失效（续期失败，需用户重新登录）。UI 订阅后提示。</summary>
+    public event Action? LoginExpired;
+
+    /// <summary>上次通知 UI「登录过期」的时间（30 秒节流，避免接口风暴时连弹）</summary>
+    private DateTime _lastExpiredRaisedUtc = DateTime.MinValue;
+
     /// <summary>用户 Cookie 持久化文件（宿主与插件约定的路径）</summary>
     private static readonly string CookieFilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -176,6 +182,59 @@ public class NeteaseOpenApiClient
             File.WriteAllText(CookieFilePath, cookie);
         }
         catch { }
+    }
+
+    /// <summary>
+    /// 登录态续期：POST /api/login/token/refresh（老明文 web 接口，带当前 Cookie 换发新 Cookie）。
+    /// 仿 api-enhanced 的 login_refresh 实现：响应 Set-Cookie 中含新 MUSIC_U 即续期成功，
+    /// 更新内存 <see cref="_cookie"/> 并持久化。会话有效期内定期/失效时调用可链式续期，
+    /// 实现「一次登录长期有效」（官方 App 的静默续期同理）。
+    /// </summary>
+    public async Task<bool> RefreshLoginTokenAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_cookie)) return false;
+        try
+        {
+            using var req = Build(HttpMethod.Post, "https://music.163.com/api/login/token/refresh");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return false;
+
+            var sets = CollectSetCookies(resp);
+            if (sets.Count == 0) return false;
+            var merged = string.Join("; ", sets);
+            // 新会话必须仍含 MUSIC_U（登录凭据），否则只是匿名 Cookie 回显，判定失败
+            if (!merged.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            _cookie = merged;
+            PersistCookie(merged);
+            // 同一账号会话续期：保留 userId/红心等派生态（不换账号，无需清空前缀缓存）
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>从响应头提取 Set-Cookie 的 name=value 段（丢弃 Path=/ 等属性），无则空列表</summary>
+    private static List<string> CollectSetCookies(HttpResponseMessage resp)
+    {
+        var list = new List<string>();
+        if (resp.Headers.TryGetValues("Set-Cookie", out var values))
+        {
+            foreach (var v in values)
+            {
+                var first = v.Split(';')[0].Trim();
+                if (first.Length > 0) list.Add(first);
+            }
+        }
+        return list;
+    }
+
+    /// <summary>通知 UI 登录已过期（30 秒节流，防接口风暴连弹）</summary>
+    private void RaiseLoginExpired()
+    {
+        if ((DateTime.UtcNow - _lastExpiredRaisedUtc).TotalSeconds < 30) return;
+        _lastExpiredRaisedUtc = DateTime.UtcNow;
+        try { LoginExpired?.Invoke(); } catch { }
     }
 
     // ════════════════ 排行榜 / 搜索 / 歌单 ════════════════
@@ -1389,13 +1448,41 @@ public class NeteaseOpenApiClient
     {
         try
         {
-            using var resp = await _http.SendAsync(Build(HttpMethod.Get, url));
-            if (!resp.IsSuccessStatusCode) return null;
-            var json = await resp.Content.ReadAsStringAsync();
-            return JsonDocument.Parse(json);
+            var doc = await SendJsonAsync(HttpMethod.Get, url);
+            // 携带了登录 Cookie 却被判定"需要登录"(code=301)：会话已过期 →
+            // 尝试静默续期（/api/login/token/refresh）一次并重试；续期失败再提示用户重登。
+            if (doc != null && IsLoginRequired(doc.RootElement)
+                && !string.IsNullOrWhiteSpace(_cookie))
+            {
+                if (await RefreshLoginTokenAsync())
+                {
+                    doc = await SendJsonAsync(HttpMethod.Get, url);
+                }
+                else
+                {
+                    RaiseLoginExpired();
+                }
+            }
+            return doc;
         }
         catch { return null; }
     }
+
+    private async Task<JsonDocument?> SendJsonAsync(HttpMethod method, string url)
+    {
+        using var resp = await _http.SendAsync(Build(method, url));
+        if (!resp.IsSuccessStatusCode) return null;
+        var json = await resp.Content.ReadAsStringAsync();
+        try { return JsonDocument.Parse(json); } catch { return null; }
+    }
+
+    /// <summary>网易云业务错误码 301 = 需要登录（Cookie 缺失或会话已失效）</summary>
+    private static bool IsLoginRequired(JsonElement root)
+        => root.ValueKind == JsonValueKind.Object
+           && root.TryGetProperty("code", out var code)
+           && code.ValueKind == JsonValueKind.Number
+           && code.TryGetInt32(out var c)
+           && c == 301;
 
     /// <summary>解析歌单 JSON（兼容 coverImgUrl/picUrl 两种封面字段）</summary>
     private static OnlinePlaylist ParsePlaylist(JsonElement pl, string coverField = "coverImgUrl")
