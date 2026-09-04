@@ -313,6 +313,26 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         _audioPlayer.PlaybackCompleted += OnAudioPlaybackCompleted;
         _audioPlayer.PlaybackStateChanged += OnPlaybackStateChanged;
         _qualityLevel = _plugin.QualityLevel;
+        // 登录态长保：续期失败（会话彻底失效）时提示用户重新登录
+        _plugin.ApiClient.LoginExpired += OnLoginExpired;
+    }
+
+    private void OnLoginExpired()
+    {
+        // 续期失败的过期提示用对话框：任何页面都能看到（轻提示条只在插件页面可见）
+        _ = MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            try
+            {
+                var page = Application.Current?.Windows.FirstOrDefault()?.Page;
+                if (page == null) return;
+                await page.DisplayAlertAsync(
+                    "网易云登录已过期",
+                    "无法继续使用个性化功能（私人漫游 / 红心 / 我的歌单）。\n请点击右上角账号重新登录。",
+                    "好");
+            }
+            catch { }
+        });
     }
 
     /// <summary>页面出现时加载初始数据</summary>
