@@ -49,3 +49,25 @@ public class SimilarPlaylistInfo
     public int PlayCount { get; set; }
     public string Creator { get; set; } = "";
 }
+
+/// <summary>
+/// 歌单动态信息（eapi /eapi/playlist/detail/dynamic）。
+/// 歌单详情页头部三操作胶囊（分享/评论/收藏）与创建者行数据来源。
+/// </summary>
+public class PlaylistDynamicInfo
+{
+    /// <summary>创建者昵称</summary>
+    public string? CreatorName { get; set; }
+    /// <summary>创建者头像 URL</summary>
+    public string? CreatorAvatar { get; set; }
+    /// <summary>累计播放次数</summary>
+    public long PlayCount { get; set; }
+    /// <summary>收藏（订阅）人数</summary>
+    public long SubscribedCount { get; set; }
+    /// <summary>评论数</summary>
+    public long CommentCount { get; set; }
+    /// <summary>分享数</summary>
+    public long ShareCount { get; set; }
+    /// <summary>歌曲总数（与广场卡片 trackCount 一致，兜底校验用）</summary>
+    public int TrackCount { get; set; }
+}

@@ -568,6 +568,44 @@ public class NeteaseOpenApiClient
     }
 
     /// <summary>按 id 批量取歌曲详情（/eapi/v3/song/detail，c=[{"id":..}]，单批上限 1000）</summary>
+    /// <summary>
+    /// 歌单动态信息（创建者/收藏数/评论数/分享数/播放数）。
+    /// eapi /eapi/playlist/detail/dynamic（裸密文响应，参数与 v6/detail 同族；api-enhanced 同款实现）。
+    /// 歌单详情页头部三操作胶囊数据来源。
+    /// </summary>
+    public async Task<PlaylistDynamicInfo?> GetPlaylistDetailDynamicAsync(string playlistId)
+    {
+        try
+        {
+            if (!long.TryParse(playlistId, out var id)) return null;
+            var raw = await NeteaseEapi.RequestAsync(_http, "/eapi/playlist/detail/dynamic", new Dictionary<string, object>
+            {
+                ["id"] = id,
+                ["n"] = 100000,
+                ["s"] = 8,
+            }, _cookie, rawCipherResponse: true);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("playlist", out var pl) || pl.ValueKind != JsonValueKind.Object)
+                return null;
+            var info = new PlaylistDynamicInfo();
+            if (pl.TryGetProperty("creator", out var cr) && cr.ValueKind == JsonValueKind.Object)
+            {
+                if (cr.TryGetProperty("nickname", out var nk) && nk.ValueKind == JsonValueKind.String)
+                    info.CreatorName = nk.GetString();
+                if (cr.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String)
+                    info.CreatorAvatar = ToHttps(av.GetString() ?? "");
+            }
+            info.PlayCount = pl.TryGetProperty("playCount", out var pc) && pc.ValueKind == JsonValueKind.Number ? pc.GetInt64() : 0;
+            info.SubscribedCount = pl.TryGetProperty("subscribedCount", out var sc) && sc.ValueKind == JsonValueKind.Number ? sc.GetInt64() : 0;
+            info.CommentCount = pl.TryGetProperty("commentCount", out var cc) && cc.ValueKind == JsonValueKind.Number ? cc.GetInt64() : 0;
+            info.ShareCount = pl.TryGetProperty("shareCount", out var shc) && shc.ValueKind == JsonValueKind.Number ? shc.GetInt64() : 0;
+            info.TrackCount = pl.TryGetProperty("trackCount", out var tc) && tc.ValueKind == JsonValueKind.Number ? tc.GetInt32() : 0;
+            return info;
+        }
+        catch { return null; }
+    }
+
     private async Task<List<OnlineSong>> FetchSongsByIdsAsync(List<long> ids)
     {
         var result = new List<OnlineSong>();
@@ -1466,11 +1504,20 @@ public class NeteaseOpenApiClient
     public Task<List<SongComment>> GetSongCommentsAsync(string songId, int limit = 20, int offset = 0)
         => GetCommentsAsync(songId, limit, offset, hot: false);
 
-    private async Task<List<SongComment>> GetCommentsAsync(string songId, int limit, int offset, bool hot)
+    /// <summary>歌单评论（资源评论族 A_PL_0_，与歌曲评论同结构同解析；匿名可用）。</summary>
+    public Task<List<SongComment>> GetPlaylistCommentsAsync(string playlistId, int limit = 20, int offset = 0)
+        => GetCommentsAsync(playlistId, limit, offset, hot: false, "A_PL_0_");
+
+    /// <summary>歌单热门评论（资源评论族 A_PL_0_）。</summary>
+    public Task<List<SongComment>> GetPlaylistHotCommentsAsync(string playlistId, int limit = 20)
+        => GetCommentsAsync(playlistId, limit, offset: 0, hot: true, "A_PL_0_");
+
+    private async Task<List<SongComment>> GetCommentsAsync(string songId, int limit, int offset, bool hot,
+        string resourcePrefix = "R_SO_4_")
     {
         var list = new List<SongComment>();
         if (string.IsNullOrWhiteSpace(songId)) return list;
-        var rid = $"R_SO_4_{songId}";
+        var rid = $"{resourcePrefix}{songId}";
         var url = hot
             ? $"https://music.163.com/api/v1/resource/hot/comments/{rid}?rid={rid}&limit={limit}"
             : $"https://music.163.com/api/v1/resource/comments/{rid}?rid={rid}&limit={limit}&offset={offset}";

@@ -445,12 +445,30 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public async Task OpenPlaylistAsync(OnlinePlaylist? playlist)
     {
         if (playlist == null) return;
+        // 歌单详情改为独立页面（仿网易云官方详情页）；数据加载与展示在详情页内完成。
+        // 同一歌单已在导航栈顶部（快速双击卡片）时不重复推页。
+        try
+        {
+            var nav = NeteaseNav.TryGetShell()?.Navigation
+                ?? Application.Current?.Windows.FirstOrDefault()?.Page?.Navigation;
+            if (nav != null && nav.NavigationStack.LastOrDefault() is NeteasePlaylistDetailPage top
+                && top.PlaylistId == playlist.Id)
+                return;
+        }
+        catch { }
+        await NeteaseNav.PushAsync(new NeteasePlaylistDetailPage(_plugin, this, playlist, _services));
+    }
+
+    /// <summary>
+    /// 加载歌单全部歌曲进 <see cref="Songs"/>（歌单详情页调用）。
+    /// 复用 VM 队列上下文：播放/红心/评论/相似等命令无缝衔接。
+    /// </summary>
+    public async Task LoadPlaylistSongsAsync(OnlinePlaylist? playlist)
+    {
+        if (playlist == null) return;
         // 浏览歌单不退出电台：仅真正播放非 FM 歌曲时才 LeaveFmMode（PlayFromAsync）
-        IsLoading = true;
-        SongsStatus = "正在加载歌曲...";
-        CurrentListTitle = playlist.Name;
         _currentPlaylistId = playlist.Id;
-        ShowSimilarPlaylists = true;
+        CurrentListTitle = playlist.Name;
         _context = BrowseContext.Songs;
         Songs.Clear();
         try
@@ -458,20 +476,11 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             var pageSize = playlist.SongCount > 0 ? playlist.SongCount : 200;
             var songs = await _plugin.GetPlaylistSongsAsync(playlist, 1, pageSize);
             FillSongs(songs);
-            SongsStatus = Songs.Count == 0 ? "歌单为空" : "";
         }
         catch (Exception ex)
         {
-            SongsStatus = $"歌曲加载失败：{ex.Message}";
+            ShowTip($"歌曲加载失败：{ex.Message}");
         }
-        finally
-        {
-            IsLoading = false;
-        }
-        ShowPlaylists = false;
-        ShowArtists = false;
-        ShowSongs = true;
-        ShowHistoryDaily = false;
     }
 
     [RelayCommand]

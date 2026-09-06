@@ -76,7 +76,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.14";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.15";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词/下载）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like", "download" };
@@ -623,42 +623,65 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
         var songId = ExtractNeteaseSongId(song.RemoteId);
         if (songId == null) return;
 
-        var manager = ResolveDownloadManager();
-        if (manager == null)
-        {
-            await NotifyAsync("下载失败", "无法访问宿主下载服务，请更新猫爪音乐到新版本。");
-            return;
-        }
+        var quality = await PickDownloadQualityAsync();
+        if (quality == null) return;
 
-        // 音质选择（无损及以上为黑胶 VIP 档，未登录提示去插件页登录）
+        // 复用在线歌曲下载核心（与歌单详情页/批量下载同一链路）
+        var ok = await DownloadOnlineSongAsync(new OnlineSong
+        {
+            Id = songId,
+            Title = song.Title,
+            Artist = song.Artist,
+        }, quality);
+        if (ok)
+            await NotifyAsync("已加入下载队列", $"{song.Title}\n{QualityLabel(quality.Value)}");
+        else
+            await NotifyAsync("下载失败", "获取播放直链失败，该歌曲可能无版权或音质权限不足。");
+    }
+
+    /// <summary>弹出下载音质选择；返回档位（null=取消）。未登录时 VIP 档会提示需登录。</summary>
+    public async Task<int?> PickDownloadQualityAsync()
+    {
         var loggedIn = _client.HasCookie;
         var quality = await ShowQualityPickerAsync(loggedIn);
-        if (quality == null) return;
         if (quality >= 2 && !loggedIn)
         {
             await NotifyAsync("需要登录", "无损 / Hires / 高清臻音需登录网易云账号（黑胶 VIP）后下载，\n请到「网易云音乐」插件页登录。");
-            return;
+            return null;
         }
-
-        var (url, ext, actualLevel) = await _client.GetPlayUrlWithTypeAsync(songId, quality.Value);
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            await NotifyAsync("下载失败", "获取播放直链失败，该歌曲可能无版权或音质权限不足。");
-            return;
-        }
-
-        // 扩展名优先用 eapi 返回的真实 type（flac/mp3），缺失时按档位/URL 推断
-        var pickedExt = NormalizeExt(ext) ?? GuessExtension(url, quality.Value);
-        manager.EnqueueUrl(url, BuildDownloadFileName(song, pickedExt));
-
-        // 提示服务端实际下发的档位：请求 Hires/臻音但歌曲无该资源时会静默回落（如实测请求 hires 返回 lossless）
-        var requested = QualityLabel(quality.Value);
-        var actual = LevelLabel(actualLevel);
-        var qualityText = actual != null && actual != requested
-            ? $"{actual}（该曲无{requested}资源，已取最高可得音质）"
-            : requested;
-        await NotifyAsync("已加入下载队列", $"{song.Title}\n{qualityText}");
+        return quality;
     }
+
+    /// <summary>
+    /// 在线歌曲下载核心（歌单详情页/批量下载复用）：按档位取直链 → 宿主下载中心入队。
+    /// 返回是否成功入队；不弹窗（调用方负责提示）。
+    /// </summary>
+    public async Task<bool> DownloadOnlineSongAsync(OnlineSong song, int? quality = null, IServiceProvider? services = null)
+    {
+        if (song == null || string.IsNullOrWhiteSpace(song.Id)) return false;
+        var manager = ResolveDownloadManager(services);
+        if (manager == null) return false;
+
+        var q = Math.Clamp(quality ?? QualityLevel, 0, NeteaseOpenApiClient.QualityMax);
+        var (url, ext, actualLevel) = await _client.GetPlayUrlWithTypeAsync(song.Id, q);
+        if (string.IsNullOrWhiteSpace(url)) return false;
+
+        var pickedExt = NormalizeExt(ext) ?? GuessExtension(url, q);
+        manager.EnqueueUrl(url, BuildDownloadFileName(song.Title, song.Artist, pickedExt));
+        return true;
+    }
+
+    /// <summary>取歌单动态信息（创建者/收藏数/评论数/分享数/播放数；详情页头部用）。</summary>
+    public Task<PlaylistDynamicInfo?> GetPlaylistDynamicInfoAsync(string playlistId)
+        => _client.GetPlaylistDetailDynamicAsync(playlistId);
+
+    /// <summary>歌单评论（热门）。</summary>
+    public Task<List<SongComment>> GetPlaylistHotCommentsAsync(string playlistId, int limit = 20)
+        => _client.GetPlaylistHotCommentsAsync(playlistId, limit);
+
+    /// <summary>歌单评论（最新，offset 翻页）。</summary>
+    public Task<List<SongComment>> GetPlaylistCommentsAsync(string playlistId, int limit = 20, int offset = 0)
+        => _client.GetPlaylistCommentsAsync(playlistId, limit, offset);
 
     /// <summary>eapi 返回的实际档位 level → 显示名（与请求档位不同说明发生了回落）</summary>
     private static string? LevelLabel(string? level) => level?.ToLowerInvariant() switch
@@ -713,9 +736,9 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     }
 
     /// <summary>解析宿主下载管理器（Core 接口，实现位于 CatClawMusic.Maui）</summary>
-    private static IDownloadManager? ResolveDownloadManager()
+    private static IDownloadManager? ResolveDownloadManager(IServiceProvider? services = null)
     {
-        var services = _hostServices ?? ResolveHostServicesViaMaui();
+        services ??= _hostServices ?? ResolveHostServicesViaMaui();
         if (services == null) return null;
         try { return services.GetService<IDownloadManager>(); }
         catch { return null; }
@@ -754,12 +777,12 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     }
 
     /// <summary>构造下载文件名："标题 - 艺术家.ext"（清理非法字符，宿主入队时还会再 Sanitize 一次）</summary>
-    private static string BuildDownloadFileName(Song song, string ext)
+    private static string BuildDownloadFileName(string title, string artist, string ext)
     {
-        var title = SanitizeFilePart(song.Title);
-        if (string.IsNullOrWhiteSpace(title)) title = "未命名";
-        var artist = SanitizeFilePart(song.Artist);
-        var name = string.IsNullOrWhiteSpace(artist) ? title : $"{title} - {artist}";
+        var t = SanitizeFilePart(title);
+        if (string.IsNullOrWhiteSpace(t)) t = "未命名";
+        var a = SanitizeFilePart(artist);
+        var name = string.IsNullOrWhiteSpace(a) ? t : $"{t} - {a}";
         return $"{name}.{ext}";
     }
 

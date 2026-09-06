@@ -22,10 +22,13 @@ public class NeteaseCommentsPage : ContentPage
     private int _offset;
     private bool _hot = true;
     private bool _busy;
+    private readonly bool _isPlaylist;
 
-    public NeteaseCommentsPage(OnlineSong song, NetEaseMusicPlugin plugin)
+    /// <param name="isPlaylist">true = 歌单评论（A_PL_0_ 资源族）；false = 歌曲评论（R_SO_4_）</param>
+    public NeteaseCommentsPage(OnlineSong song, NetEaseMusicPlugin plugin, bool isPlaylist = false)
     {
         _plugin = plugin;
+        _isPlaylist = isPlaylist;
         var songId = song.Id;
 
         BackgroundColor = Application.Current?.Resources.TryGetValue("WindowBackgroundColor", out var bg) == true
@@ -159,8 +162,12 @@ public class NeteaseCommentsPage : ContentPage
         try
         {
             var list = _hot
-                ? await _plugin.GetSongHotCommentsAsync(songId, 20)
-                : await _plugin.GetSongCommentsAsync(songId, 20, 0);
+                ? (_isPlaylist
+                    ? await _plugin.GetPlaylistHotCommentsAsync(songId, 20)
+                    : await _plugin.GetSongHotCommentsAsync(songId, 20))
+                : (_isPlaylist
+                    ? await _plugin.GetPlaylistCommentsAsync(songId, 20, 0)
+                    : await _plugin.GetSongCommentsAsync(songId, 20, 0));
             Append(list);
             _loadMore.IsVisible = list.Count >= 20;
         }
