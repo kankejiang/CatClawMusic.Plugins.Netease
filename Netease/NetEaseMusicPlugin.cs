@@ -81,7 +81,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词/下载）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like", "download" };
 
-    /// <summary>当前音质档位（0=标准 128k，1=高品 320k，2=无损 FLAC；登录增强）</summary>
+    /// <summary>当前音质档位（0=标准 128k，1=极高 320k，2=无损 FLAC，3=Hires 高解析度，4=高清臻音；2+ 需登录 VIP）</summary>
     public int QualityLevel { get; private set; } = 1;
 
     // ── IQuickEntryPlugin：宿主发现页 HeroTrack 快捷入口（通用机制，任何插件可注册）──
@@ -119,7 +119,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>设置音质档位并持久化（宿主/插件 UI 共用一份状态）</summary>
     public void SetQualityLevel(int level)
     {
-        QualityLevel = Math.Clamp(level, 0, 2);
+        QualityLevel = Math.Clamp(level, 0, NeteaseOpenApiClient.QualityMax);
         try { File.WriteAllText(QualityFilePath, QualityLevel.ToString()); } catch { }
     }
 
@@ -174,7 +174,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
                 if (!string.IsNullOrWhiteSpace(cookie)) _client.SetCookie(cookie);
             }
             if (File.Exists(QualityFilePath) && int.TryParse(File.ReadAllText(QualityFilePath).Trim(), out var q))
-                QualityLevel = Math.Clamp(q, 0, 2);
+                QualityLevel = Math.Clamp(q, 0, NeteaseOpenApiClient.QualityMax);
         }
         catch { }
 
@@ -585,12 +585,14 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
         { "mp3", "flac", "m4a", "aac", "ogg", "wav", "wma", "ape" };
 
-    /// <summary>音质档位显示名（下载入队提示用）</summary>
+    /// <summary>音质档位显示名（下载弹窗与入队提示共用；与官方客户端术语对齐）</summary>
     private static string QualityLabel(int level) => level switch
     {
         0 => "标准 128k",
         2 => "无损 FLAC",
-        _ => "高品 320k",
+        3 => "Hires 高解析度无损",
+        4 => "高清臻音",
+        _ => "极高 320k",
     };
 
     /// <summary>
@@ -612,7 +614,8 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     }
 
     /// <summary>
-    /// 下载当前歌曲：按插件当前音质档位取直链 → 交给宿主 <see cref="IDownloadManager"/> 落盘。
+    /// 下载当前歌曲：先弹音质选择（标准/极高/无损/Hires/高清臻音），
+    /// 按所选档位取直链 → 交给宿主 <see cref="IDownloadManager"/> 落盘。
     /// 下载进度/暂停/续传/目录设置全部由宿主下载中心负责，插件只负责取链与命名。
     /// </summary>
     private async Task DownloadSongAsync(Song song)
@@ -627,23 +630,72 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
             return;
         }
 
-        var quality = QualityLevel;
-        string? url;
-        try { url = await _client.GetPlayUrlAsync(songId, quality); }
-        catch (Exception ex)
+        // 音质选择（无损及以上为黑胶 VIP 档，未登录提示去插件页登录）
+        var loggedIn = _client.HasCookie;
+        var quality = await ShowQualityPickerAsync(loggedIn);
+        if (quality == null) return;
+        if (quality >= 2 && !loggedIn)
         {
-            Log.Debug("NeteasePlugin", $"[Download] 取链异常: {ex.Message}");
-            url = null;
-        }
-
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            await NotifyAsync("下载失败", "获取播放直链失败，该歌曲可能无版权或需要登录。");
+            await NotifyAsync("需要登录", "无损 / Hires / 高清臻音需登录网易云账号（黑胶 VIP）后下载，\n请到「网易云音乐」插件页登录。");
             return;
         }
 
-        manager.EnqueueUrl(url, BuildDownloadFileName(song, GuessExtension(url, quality)));
-        await NotifyAsync("已加入下载队列", $"{song.Title}\n{QualityLabel(quality)}");
+        var (url, ext, actualLevel) = await _client.GetPlayUrlWithTypeAsync(songId, quality.Value);
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            await NotifyAsync("下载失败", "获取播放直链失败，该歌曲可能无版权或音质权限不足。");
+            return;
+        }
+
+        // 扩展名优先用 eapi 返回的真实 type（flac/mp3），缺失时按档位/URL 推断
+        var pickedExt = NormalizeExt(ext) ?? GuessExtension(url, quality.Value);
+        manager.EnqueueUrl(url, BuildDownloadFileName(song, pickedExt));
+
+        // 提示服务端实际下发的档位：请求 Hires/臻音但歌曲无该资源时会静默回落（如实测请求 hires 返回 lossless）
+        var requested = QualityLabel(quality.Value);
+        var actual = LevelLabel(actualLevel);
+        var qualityText = actual != null && actual != requested
+            ? $"{actual}（该曲无{requested}资源，已取最高可得音质）"
+            : requested;
+        await NotifyAsync("已加入下载队列", $"{song.Title}\n{qualityText}");
+    }
+
+    /// <summary>eapi 返回的实际档位 level → 显示名（与请求档位不同说明发生了回落）</summary>
+    private static string? LevelLabel(string? level) => level?.ToLowerInvariant() switch
+    {
+        "standard" => "标准 128k",
+        "exhigh" => "极高 320k",
+        "lossless" => "无损 FLAC",
+        "hires" => "Hires 高解析度无损",
+        "jyeffect" => "高清臻音",
+        _ => null,
+    };
+
+    /// <summary>
+    /// 下载音质选择弹窗（ActionSheet 五档）。返回选中的档位；取消或弹窗失败返回 null。
+    /// </summary>
+    private static async Task<int?> ShowQualityPickerAsync(bool loggedIn)
+    {
+        var page = GetHostPage();
+        if (page == null) return null;
+        try
+        {
+            // 未登录时 VIP 档直接标注，点了会提示登录而不是默默降级
+            var vipSuffix = loggedIn ? "" : "（需登录）";
+            string[] options =
+            {
+                "标准 128k",
+                "极高 320k",
+                $"无损 FLAC{vipSuffix}",
+                $"Hires 高解析度无损{vipSuffix}",
+                $"高清臻音{vipSuffix}",
+            };
+            var pick = await page.DisplayActionSheetAsync("选择下载音质", "取消", null, options);
+            if (string.IsNullOrWhiteSpace(pick)) return null;
+            var idx = Array.IndexOf(options, pick);
+            return idx >= 0 ? idx : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>
@@ -725,7 +777,12 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
         return sb.ToString().Trim().TrimEnd('.');
     }
 
-    /// <summary>从直链推断扩展名；URL 无有效扩展名时按音质档位回退（无损 flac，其余 mp3）</summary>
+    /// <summary>校验并规范化扩展名（仅放行白名单内小写；eapi 的 type 字段用）</summary>
+    private static string? NormalizeExt(string? ext)
+        => string.IsNullOrWhiteSpace(ext) ? null
+            : (AllowedExtensions.Contains(ext) ? ext.Trim().ToLowerInvariant() : null);
+
+    /// <summary>从直链推断扩展名；URL 无有效扩展名时按音质档位回退（无损及以上 flac，标准/极高 mp3）</summary>
     private static string GuessExtension(string url, int quality)
     {
         try
@@ -734,16 +791,26 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
             if (!string.IsNullOrEmpty(ext) && AllowedExtensions.Contains(ext)) return ext;
         }
         catch { }
-        return quality == 2 ? "flac" : "mp3";
+        return quality is 0 or 1 ? "mp3" : "flac";
     }
 
-    /// <summary>轻量提示。宿主桌面端无 Shell（Shell.Current 为 null），走主窗口 Page 的 DisplayAlert</summary>
-    private static async Task NotifyAsync(string title, string message)
+    /// <summary>宿主主窗口的 Page（弹窗/提示用；桌面端无 Shell，不走 Shell.Current）</summary>
+    private static Microsoft.Maui.Controls.Page? GetHostPage()
     {
         try
         {
             var app = Microsoft.Maui.Controls.Application.Current;
-            var page = app != null && app.Windows.Count > 0 ? app.Windows[0].Page : null;
+            return app != null && app.Windows.Count > 0 ? app.Windows[0].Page : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>轻量提示（主窗口 Page 的 DisplayAlert）</summary>
+    private static async Task NotifyAsync(string title, string message)
+    {
+        try
+        {
+            var page = GetHostPage();
             if (page != null) await page.DisplayAlertAsync(title, message, "好");
         }
         catch { }

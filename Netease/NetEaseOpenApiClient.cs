@@ -37,7 +37,7 @@ public class NeteaseOpenApiClient
             "CatClawMusic.Maui", "netease_uid.txt");
 
     // ── 播放直链缓存（songId:quality → (url, 过期时间)）──
-    private readonly Dictionary<string, (string Url, DateTime ExpireAt)> _urlCache = new();
+    private readonly Dictionary<string, (string Url, string? Ext, string? Level, DateTime ExpireAt)> _urlCache = new();
     private readonly object _urlCacheLock = new();
     private static readonly TimeSpan UrlCacheTtl = TimeSpan.FromMinutes(20);
 
@@ -997,13 +997,24 @@ public class NeteaseOpenApiClient
     // ════════════════ 播放直链 / 歌词 ════════════════
 
     /// <summary>
-    /// 播放直链（带音质 + 20 分钟缓存 + 三级兜底）。
-    /// quality：0=标准 128k，1=高品 320k，2=无损 FLAC（需登录，匿名自动降级 320k）。
+    /// 播放直链（带音质 + 20 分钟缓存 + 多级兜底）。
+    /// quality：0=标准 128k，1=极高 320k，2=无损 FLAC(VIP)，3=Hires 高解析度无损(VIP)，4=高清臻音(VIP)。
     /// </summary>
     public async Task<string?> GetPlayUrlAsync(string songId, int quality = 1)
+        => (await GetPlayUrlWithTypeAsync(songId, quality)).Url;
+
+    /// <summary>
+    /// 播放直链 + 真实扩展名 + 实际档位（下载命名/提示用；播放场景可忽略 Ext/Level）。
+    /// Ext 来自 eapi 返回的 type 字段（flac/mp3），老接口回退时按档位推断；
+    /// Level 为服务端实际下发的档位（请求 hires 但歌曲无 Hires 资源时会回落 lossless）。
+    /// </summary>
+    public async Task<(string? Url, string? Ext, string? Level)> GetPlayUrlWithTypeAsync(string songId, int quality = 1)
     {
-        if (string.IsNullOrWhiteSpace(songId)) return null;
-        quality = Math.Clamp(quality, 0, 2);
+        if (string.IsNullOrWhiteSpace(songId)) return (null, null, null);
+        quality = Math.Clamp(quality, 0, QualityMax);
+
+        // VIP 档（无损及以上）未登录：匿名请求会被风控，直接降为极高 320k 流程
+        if (quality >= 2 && !HasCookie) quality = 1;
 
         // 缓存命中
         var cacheKey = $"{songId}:{quality}";
@@ -1011,42 +1022,65 @@ public class NeteaseOpenApiClient
         {
             if (_urlCache.TryGetValue(cacheKey, out var hit))
             {
-                if (hit.ExpireAt > DateTime.UtcNow) return hit.Url;
+                if (hit.ExpireAt > DateTime.UtcNow) return (hit.Url, hit.Ext, hit.Level);
                 _urlCache.Remove(cacheKey);
             }
         }
 
-        string? url = await ResolvePlayUrlAsync(songId, quality);
+        var (url, ext, level) = await ResolvePlayUrlWithTypeAsync(songId, quality);
         if (!string.IsNullOrWhiteSpace(url))
         {
             lock (_urlCacheLock)
             {
-                _urlCache[cacheKey] = (url, DateTime.UtcNow + UrlCacheTtl);
+                _urlCache[cacheKey] = (url, ext, level, DateTime.UtcNow + UrlCacheTtl);
                 // 简单防爆：缓存条目过多时整体清空（TTL 20 分钟，通常远达不到）
                 if (_urlCache.Count > 2000) _urlCache.Clear();
             }
         }
-        return url;
+        return (url, ext, level);
     }
+
+    /// <summary>支持的最高音质档位（0=标准 1=极高 2=无损 3=Hires 4=高清臻音；沉浸环绕声/超清母带为 SVIP 专属未纳入）</summary>
+    public const int QualityMax = 4;
 
     private static int QualityToBr(int quality) => quality switch
     {
         0 => 128000,
-        2 => 999000,
+        2 or 3 or 4 => 999000,
         _ => 320000,
     };
 
-    /// <summary>三级兜底取链（enhance 按音质 → outer 免登录外链 → 公共 API 实例）</summary>
-    private async Task<string?> ResolvePlayUrlAsync(string songId, int quality)
+    /// <summary>音质档位 → eapi level 参数（与官方客户端音质档一一对应）</summary>
+    private static string QualityToLevel(int quality) => quality switch
     {
-        // 无损需登录：匿名请求 br=999000 会被风控，直接降为 320k 流程
-        int br = QualityToBr(quality == 2 && !HasCookie ? 1 : quality);
+        0 => "standard",
+        2 => "lossless",
+        3 => "hires",
+        4 => "jyeffect", // 高清臻音
+        _ => "exhigh",
+    };
 
-        // 方案1：enhance/player/url（按目标音质请求；静态 cookie 防风控，用户 cookie 提升完整度）
+    /// <summary>老接口回退时的扩展名推断（eapi 不可用时的粗略档位 → 格式映射）</summary>
+    private static string? ExtFromQuality(int quality)
+        => quality switch { 0 or 1 => "mp3", _ => "flac" };
+
+    /// <summary>
+    /// 多级兜底取链：① eapi level 取链（新接口，覆盖 standard/exhigh/lossless/hires/jyeffect，
+    /// 返回真实 type 与实际下发档位；VIP 档需登录 Cookie）→ ② 老 enhance br 接口
+    /// → ③ 免登录外链（≤320k）→ ④ 降档重试 → ⑤ 公共 API 实例。
+    /// </summary>
+    private async Task<(string? Url, string? Ext, string? Level)> ResolvePlayUrlWithTypeAsync(string songId, int quality)
+    {
+        // 方案1：eapi enhance/player/url/v1 按 level 取链（interface.music.163.com，歌词同款通道）
+        var (eapiUrl, eapiExt, eapiLevel) = await GetEnhanceUrlEapiAsync(songId, QualityToLevel(quality));
+        if (!string.IsNullOrWhiteSpace(eapiUrl)) return (eapiUrl, eapiExt, eapiLevel);
+
+        // 方案2：老 web 接口按码率（封顶无损；eapi 受阻时的同能力回退）
+        int br = QualityToBr(quality);
         var enhanceUrl = await GetEnhanceUrlAsync(songId, br);
-        if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
+        if (!string.IsNullOrWhiteSpace(enhanceUrl)) return (enhanceUrl, ExtFromQuality(quality), null);
 
-        // 方案2：免登录外链（302 到 CDN；标准/高品档可用）
+        // 方案3：免登录外链（302 到 CDN；标准/极高档可用）
         if (br <= 320000)
         {
             try
@@ -1054,24 +1088,24 @@ public class NeteaseOpenApiClient
                 var outer = $"https://music.163.com/song/media/outer/url?id={songId}.mp3";
                 using var resp = await _http.GetAsync(outer, HttpCompletionOption.ResponseHeadersRead);
                 if (resp.StatusCode is System.Net.HttpStatusCode.OK or System.Net.HttpStatusCode.PartialContent)
-                    return ToHttps(resp.RequestMessage?.RequestUri?.ToString() ?? outer);
+                    return (ToHttps(resp.RequestMessage?.RequestUri?.ToString() ?? outer), "mp3", null);
             }
             catch { }
         }
 
-        // 方案3：高品/无损受限 → 逐步降档再试 enhance（320k → 128k 标准档，规避部分 VIP/风控提升可播性）
+        // 方案4：高品/无损受限 → 逐步降档再试 enhance（320k → 128k 标准档，规避部分 VIP/风控提升可播性）
         if (br >= 320000)
         {
             if (br == 999000)
             {
                 enhanceUrl = await GetEnhanceUrlAsync(songId, 320000);
-                if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
+                if (!string.IsNullOrWhiteSpace(enhanceUrl)) return (enhanceUrl, "mp3", null);
             }
             enhanceUrl = await GetEnhanceUrlAsync(songId, 128000);
-            if (!string.IsNullOrWhiteSpace(enhanceUrl)) return enhanceUrl;
+            if (!string.IsNullOrWhiteSpace(enhanceUrl)) return (enhanceUrl, "mp3", null);
         }
 
-        // 方案4：公共 NeteaseCloudMusicApi 实例兜底
+        // 方案5：公共 NeteaseCloudMusicApi 实例兜底
         foreach (var api in PublicApiBases)
         {
             try
@@ -1084,13 +1118,57 @@ public class NeteaseOpenApiClient
                     if (item.TryGetProperty("url", out var u))
                     {
                         var playUrl = u.GetString();
-                        if (!string.IsNullOrWhiteSpace(playUrl)) return ToHttps(playUrl);
+                        if (!string.IsNullOrWhiteSpace(playUrl)) return (ToHttps(playUrl), null, null);
                     }
                 }
             }
             catch { }
         }
-        return null;
+        return (null, null, null);
+    }
+
+    /// <summary>
+    /// eapi /eapi/song/enhance/player/url/v1 按 level 取链（官方客户端同款接口）。
+    /// 返回 (直链, 真实扩展名, 实际档位 level)；data[].code==200 且 url 非空才算成功
+    /// （VIP 档权限不足/无该音质资源时返回 404 或服务端回落到较低 level —— 如请求 hires
+    /// 实际返回 lossless，故必须读返回的 level 字段告知用户真实音质）。
+    /// 注意：ids 须为字符串 "[id]"（数字数组会 400）；此接口响应为裸 AES 密文（非 base64）。
+    /// </summary>
+    private async Task<(string? Url, string? Ext, string? Level)> GetEnhanceUrlEapiAsync(string songId, string level)
+    {
+        try
+        {
+            if (!long.TryParse(songId, out var id)) return (null, null, null);
+            var raw = await NeteaseEapi.RequestAsync(_http, "/eapi/song/enhance/player/url/v1", new Dictionary<string, object>
+            {
+                ["ids"] = $"[{id}]", // 字符串形式 "[123456]"，与官方客户端一致
+                ["level"] = level,
+                ["encodeType"] = "flac",
+            }, _cookie, rawCipherResponse: true);
+            if (string.IsNullOrWhiteSpace(raw)) return (null, null, null);
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in data.EnumerateArray())
+                {
+                    long code = 0;
+                    if (item.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number)
+                        code = c.GetInt64();
+                    if (code != 200) continue;
+                    if (!item.TryGetProperty("url", out var u)) continue;
+                    var playUrl = u.GetString();
+                    if (string.IsNullOrWhiteSpace(playUrl)) continue;
+                    string? type = null, actualLevel = null;
+                    if (item.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String)
+                        type = t.GetString()?.Trim().TrimStart('.').ToLowerInvariant();
+                    if (item.TryGetProperty("level", out var l) && l.ValueKind == JsonValueKind.String)
+                        actualLevel = l.GetString();
+                    return (ToHttps(playUrl), type, actualLevel);
+                }
+            }
+        }
+        catch { }
+        return (null, null, null);
     }
 
     /// <summary>enhance/player/url 按码率取链（静态 cookie 免风控）</summary>

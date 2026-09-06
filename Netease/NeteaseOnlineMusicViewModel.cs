@@ -145,7 +145,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     // ── 音质 ──
 
-    /// <summary>音质档位（0=标准 128k，1=高品 320k，2=无损 FLAC）</summary>
+    /// <summary>音质档位（0=标准 128k，1=极高 320k，2=无损 FLAC，3=Hires 高解析度，4=高清臻音；2+ 需登录 VIP）</summary>
     [ObservableProperty]
     private int _qualityLevel;
 
@@ -154,7 +154,9 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         0 => "🎚 标准",
         2 => "🎚 无损",
-        _ => "🎚 高品",
+        3 => "🎚 Hires",
+        4 => "🎚 臻音",
+        _ => "🎚 极高",
     };
 
     partial void OnQualityLevelChanged(int value)
@@ -163,13 +165,13 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         _plugin.SetQualityLevel(value);
     }
 
-    /// <summary>切换音质档位（循环：标准 → 高品 → 无损）</summary>
+    /// <summary>切换音质档位（循环：标准 → 极高 → 无损 → Hires → 高清臻音）</summary>
     [RelayCommand]
     private void CycleQuality()
     {
-        QualityLevel = (QualityLevel + 1) % 3;
-        if (QualityLevel == 2 && !IsLoggedIn)
-            ShowTip("无损音质需登录，未登录时将自动使用高品");
+        QualityLevel = (QualityLevel + 1) % (NeteaseOpenApiClient.QualityMax + 1);
+        if (QualityLevel >= 2 && !IsLoggedIn)
+            ShowTip("无损及以上音质需登录（黑胶 VIP），未登录时将自动使用极高 320k");
     }
 
     // ── 歌单浏览模式 ──

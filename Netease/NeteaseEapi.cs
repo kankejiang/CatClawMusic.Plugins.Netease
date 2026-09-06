@@ -43,7 +43,14 @@ internal static class NeteaseEapi
     /// <param name="path">形如 /eapi/song/lyric/v1</param>
     /// <param name="parameters">业务参数（须为 string/long/bool，序列化顺序与 JS Object 一致）</param>
     /// <param name="userCookie">用户登录 Cookie（可选；缺省用模拟桌面客户端的预置 Cookie）</param>
-    public static async Task<string?> RequestAsync(HttpClient http, string path, IReadOnlyDictionary<string, object> parameters, string? userCookie)
+    public static Task<string?> RequestAsync(HttpClient http, string path, IReadOnlyDictionary<string, object> parameters, string? userCookie)
+        => RequestAsync(http, path, parameters, userCookie, rawCipherResponse: false);
+
+    /// <param name="rawCipherResponse">
+    /// 响应体是否为「裸 AES 密文」。实测 /eapi/song/enhance/player/url/v1 返回裸密文，
+    /// 而 /eapi/song/lyric/v1 返回 base64 密文，两个接口格式不同，故需调用方指定。
+    /// </param>
+    public static async Task<string?> RequestAsync(HttpClient http, string path, IReadOnlyDictionary<string, object> parameters, string? userCookie, bool rawCipherResponse)
     {
         try
         {
@@ -95,7 +102,14 @@ internal static class NeteaseEapi
             using var resp = await http.SendAsync(req).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return null;
             var body = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            return AesEcbDecryptBase64ToText(body);
+            var text = rawCipherResponse ? AesEcbDecryptRawToText(body) : AesEcbDecryptBase64ToText(body);
+            if (rawCipherResponse && text != null)
+            {
+                // 裸密文按 PKCS7 去填充后尾部可能残留可解析的垃圾字节，截断到最后一个 '}'
+                var end = text.LastIndexOf('}');
+                if (end >= 0 && end < text.Length - 1) text = text.Substring(0, end + 1);
+            }
+            return text;
         }
         catch { return null; }
     }
@@ -160,13 +174,19 @@ internal static class NeteaseEapi
     private static string? AesEcbDecryptBase64ToText(byte[] body)
     {
         if (body == null || body.Length == 0) return null;
+        return AesEcbDecryptRawToText(Convert.FromBase64String(Encoding.UTF8.GetString(body)));
+    }
+
+    /// <summary>裸 AES 密文（未做 base64）直接解密为 UTF-8 文本</summary>
+    private static string? AesEcbDecryptRawToText(byte[] cipher)
+    {
+        if (cipher == null || cipher.Length == 0) return null;
         using var aes = Aes.Create();
         aes.Mode = CipherMode.ECB;
         aes.Padding = PaddingMode.PKCS7;
         aes.Key = Encoding.UTF8.GetBytes(EapiKey);
         using var dec = aes.CreateDecryptor();
-        var result = dec.TransformFinalBlock(body, 0, body.Length);
-        return Encoding.UTF8.GetString(result);
+        return Encoding.UTF8.GetString(dec.TransformFinalBlock(cipher, 0, cipher.Length));
     }
 
     private static string RandomHex(int length)
