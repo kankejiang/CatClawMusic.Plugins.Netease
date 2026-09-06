@@ -458,6 +458,126 @@ public static class NeteaseUiKit
     public class EntryCard : Border
     {
         public EntryCardLayout? Layout { get; set; }
+
+        /// <summary>Hero 卡封面图（异步加载到后显示并隐藏大图标；null = 渐变兜底）。</summary>
+        public Image? HeroCover { get; set; }
+
+        /// <summary>Hero 卡的大图标（封面加载成功后隐藏）。</summary>
+        public Label? HeroIcon { get; set; }
+    }
+
+    /// <summary>
+    /// 竖版大卡入口（仿网易云首页「每日推荐/心动模式/漫游」横滑卡）：
+    /// 渐变背景 + 底部暗化渐变 + 左上大图标 + 底部标题/副标题叠层 + 可选右下播放键。
+    /// 固定尺寸 150×210，放进横向滑动容器使用。
+    /// </summary>
+    public static EntryCard CreateHeroEntryCard(string icon, string title, string subtitle,
+        string color1, string color2, bool showPlay = false)
+    {
+        var titleLabel = new Label
+        {
+            Text = title,
+            FontSize = 14,
+            FontFamily = "OpenSansSemibold",
+            TextColor = Colors.White,
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+        };
+        var subtitleLabel = new Label
+        {
+            Text = subtitle,
+            FontSize = 10,
+            TextColor = Color.FromArgb("#CCFFFFFF"),
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        var textStack = new VerticalStackLayout
+        {
+            Spacing = 0,
+            VerticalOptions = LayoutOptions.End,
+            Margin = new Thickness(12, 0, 12, 12),
+            Children = { titleLabel, subtitleLabel },
+        };
+
+        var iconLabel = new Label
+        {
+            Text = icon,
+            FontSize = 32,
+            HorizontalOptions = LayoutOptions.Start,
+            VerticalOptions = LayoutOptions.Start,
+            Margin = new Thickness(14, 14, 0, 0),
+            Shadow = new Shadow { Brush = Brush.Black, Opacity = 0.35f, Radius = 6, Offset = new Point(0, 2) },
+        };
+
+        var card = new EntryCard
+        {
+            WidthRequest = 150,
+            HeightRequest = 210,
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 16 },
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(color1), 0f),
+                    new GradientStop(Color.FromArgb(color2), 1f),
+                },
+            },
+        };
+
+        // 封面层（异步加载；加载成功后盖住渐变并隐藏大图标，加载失败保持渐变兜底）
+        var heroCover = new Image
+        {
+            Aspect = Aspect.AspectFill,
+            IsVisible = false,
+            InputTransparent = true,
+        };
+
+        // 底部暗化渐变（文字可读性），官方图片卡同款
+        var bottomFade = new BoxView
+        {
+            Background = new LinearGradientBrush(
+                new GradientStopCollection
+                {
+                    new(Colors.Transparent, 0f),
+                    new(Color.FromArgb("#B3000000"), 1f),
+                },
+                new Point(0, 0), new Point(0, 1)),
+            VerticalOptions = LayoutOptions.End,
+            HeightRequest = 110,
+        };
+
+        var content = new Grid();
+        content.Add(heroCover);   // 封面（加载成功后显示）
+        content.Add(bottomFade);  // 暗化渐变压在封面上，保证文字可读
+        content.Add(iconLabel);
+        content.Add(textStack);
+        card.HeroCover = heroCover;
+        card.HeroIcon = iconLabel;
+        if (showPlay)
+        {
+            var play = new Border
+            {
+                StrokeThickness = 0,
+                StrokeShape = new RoundRectangle { CornerRadius = 13 },
+                WidthRequest = 26, HeightRequest = 26,
+                BackgroundColor = Color.FromArgb("#33FFFFFF"),
+                HorizontalOptions = LayoutOptions.End,
+                VerticalOptions = LayoutOptions.End,
+                Margin = new Thickness(0, 0, 10, 12),
+                Content = new Label
+                {
+                    Text = "▶", TextColor = Colors.White, FontSize = 11,
+                    HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center,
+                },
+            };
+            content.Add(play);
+        }
+        card.Content = content;
+        return card;
     }
 
     /// <summary>渐变色功能入口卡片（私人漫游/每日推荐/排行榜等）：图标 + 标题 + 副标题，内容垂直居中。</summary>

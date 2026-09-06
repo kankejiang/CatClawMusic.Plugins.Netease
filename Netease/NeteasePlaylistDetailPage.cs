@@ -82,9 +82,38 @@ public class NeteasePlaylistDetailPage : ContentPage
 
     private View BuildRoot()
     {
-        var root = new Grid();
+        var root = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition { Height = GridLength.Auto }, // 顶栏
+                new RowDefinition { Height = GridLength.Auto }, // 头部（封面/标题/描述）
+                new RowDefinition { Height = GridLength.Auto }, // 三胶囊
+                new RowDefinition { Height = GridLength.Auto }, // 播放全部条
+                new RowDefinition { Height = GridLength.Star }, // 歌曲列表
+            },
+        };
 
-        // ── 沉浸背景：封面放大填充 + 深色渐变遮罩（官方同款氛围） ──
+        // ── 歌曲列表（z 最低，Row 4）：即便滚动内容越过边界，也会被上层 headerHost 遮住 ──
+        var listHost = new Grid { Children = { BuildSongsList(), _loading, _emptyLabel } };
+        Grid.SetRow(listHost, 4);
+        root.Children.Add(listHost);
+
+        // ── 头部容器（z 最高，跨 Row 0-3）：内含封面背景 + 暗化遮罩，整块不透明，
+        //    保证列表滚动内容从头部的「后面」经过而不是盖在头上（官方同款层级） ──
+        var headerHost = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto },
+            },
+            RowSpacing = 10,
+            Padding = new Thickness(16, 10, 16, 0),
+        };
+
         var bg = new Image
         {
             Aspect = Aspect.AspectFill,
@@ -93,6 +122,8 @@ public class NeteasePlaylistDetailPage : ContentPage
         bg.SetBinding(Image.SourceProperty, new Binding(nameof(OnlinePlaylist.CoverUrl),
             converter: NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance)
         { Source = _playlist });
+        headerHost.Children.Add(bg);
+
         var overlay = new BoxView
         {
             InputTransparent = true,
@@ -105,42 +136,15 @@ public class NeteasePlaylistDetailPage : ContentPage
                 },
                 new Point(0, 0), new Point(0, 1)),
         };
-        root.Add(bg);
-        root.Add(overlay);
+        headerHost.Children.Add(overlay);
 
-        // ── 前景内容 ──
-        var content = new Grid
-        {
-            RowDefinitions =
-            {
-                new RowDefinition { Height = GridLength.Auto }, // 顶栏
-                new RowDefinition { Height = GridLength.Auto }, // 头部（封面/标题/描述）
-                new RowDefinition { Height = GridLength.Auto }, // 三胶囊
-                new RowDefinition { Height = GridLength.Auto }, // 播放全部条
-                new RowDefinition { Height = GridLength.Star }, // 歌曲列表
-            },
-            RowSpacing = 10,
-            Padding = new Thickness(16, 10, 16, 10),
-        };
+        headerHost.Children.Add(Cell(BuildTopBar(), 0));
+        headerHost.Children.Add(Cell(BuildHeader(), 1));
+        headerHost.Children.Add(Cell(BuildActionPills(), 2));
+        headerHost.Children.Add(Cell(BuildPlayAllBar(), 3));
+        Grid.SetRowSpan(headerHost, 4);
+        root.Children.Add(headerHost);
 
-        // 显式 SetRow：Grid.Add(view, N) 的单 int 重载会把 N 当列号，行必须手动指定
-        var topBar = BuildTopBar();
-        Grid.SetRow(topBar, 0);
-        content.Children.Add(topBar);
-        var header = BuildHeader();
-        Grid.SetRow(header, 1);
-        content.Children.Add(header);
-        var pills = BuildActionPills();
-        Grid.SetRow(pills, 2);
-        content.Children.Add(pills);
-        var playAll = BuildPlayAllBar();
-        Grid.SetRow(playAll, 3);
-        content.Children.Add(playAll);
-        var listHost = new Grid { Children = { BuildSongsList(), _loading, _emptyLabel } };
-        Grid.SetRow(listHost, 4);
-        content.Children.Add(listHost);
-
-        root.Add(content);
         return root;
     }
 
@@ -358,7 +362,13 @@ public class NeteasePlaylistDetailPage : ContentPage
                 Children = { Cell(coverBorder), Cell(new VerticalStackLayout { Spacing = 0, VerticalOptions = LayoutOptions.Center, Children = { title, artist } }, col: 1), Cell(more, col: 2) },
             };
         }));
-        return new ScrollView { Content = list };
+        // Android：ScrollView 无背景时不裁剪滚动内容，列表会上滑溢出盖住头部；
+        // 给不透明深色背景即可触发裁剪（观感与官方下半屏深色一致）
+        return new ScrollView
+        {
+            Content = list,
+            BackgroundColor = Color.FromArgb("#141418"),
+        };
     }
 
     // ══════════════════ 行为 ══════════════════

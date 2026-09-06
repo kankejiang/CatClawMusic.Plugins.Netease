@@ -34,12 +34,12 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly Border searchBorder;
     private readonly ScrollView searchModesScroll;
     private readonly HorizontalStackLayout searchModesLayout;
-    private readonly Grid entryContainer;
-    private readonly Border fmCard;
-    private readonly Border dailyCard;
-    private readonly Border toplistCard;
-    private readonly Border myCard;
-    private readonly Border recommendCard;
+    private readonly ScrollView entryContainer;
+    private readonly NeteaseUiKit.EntryCard fmCard;
+    private readonly NeteaseUiKit.EntryCard dailyCard;
+    private readonly NeteaseUiKit.EntryCard toplistCard;
+    private readonly NeteaseUiKit.EntryCard myCard;
+    private readonly NeteaseUiKit.EntryCard recommendCard;
 
     // 响应式布局状态（宽屏 ≥900：入口卡片一行、搜索行合一）
     private bool _isWideLayout;
@@ -180,57 +180,51 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(searchModesScroll, 1);
 
         // ── 功能入口（登录后可见：我的歌单 / 推荐歌单）──
-        fmCard = NeteaseUiKit.CreateEntryCard("🎧", "私人漫游", "随机推荐", "#667eea", "#764ba2");
+        fmCard = NeteaseUiKit.CreateHeroEntryCard("🎧", "私人漫游", "多样频道无限听", "#667eea", "#764ba2", showPlay: true);
         var fmTap = new TapGestureRecognizer();
         fmTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadPrivateFmCommand));
         fmCard.GestureRecognizers.Add(fmTap);
 
-        dailyCard = NeteaseUiKit.CreateEntryCard("📅", "每日推荐", "今天想听什么", "#f7971e", "#ffd200");
+        dailyCard = NeteaseUiKit.CreateHeroEntryCard("📅", "每日推荐", "今日限定好歌推荐", "#f7971e", "#ffd200", showPlay: true);
         var dailyTap = new TapGestureRecognizer();
         dailyTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadDailyRecommendCommand));
         dailyCard.GestureRecognizers.Add(dailyTap);
 
-        toplistCard = NeteaseUiKit.CreateEntryCard("🔥", "排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
+        toplistCard = NeteaseUiKit.CreateHeroEntryCard("🔥", "排行榜", "飙升 · 新歌 · 热歌", "#f953c6", "#b91d73");
         var toplistTap = new TapGestureRecognizer();
         toplistTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadToplistsCommand));
         toplistCard.GestureRecognizers.Add(toplistTap);
 
-        myCard = NeteaseUiKit.CreateEntryCard("💛", "我的歌单", "创建与收藏", "#11998e", "#38ef7d");
+        myCard = NeteaseUiKit.CreateHeroEntryCard("💛", "我的歌单", "创建与收藏", "#11998e", "#38ef7d");
         myCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
         var myTap = new TapGestureRecognizer();
         myTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadMyPlaylistsCommand));
         myCard.GestureRecognizers.Add(myTap);
 
-        recommendCard = NeteaseUiKit.CreateEntryCard("✨", "推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
+        recommendCard = NeteaseUiKit.CreateHeroEntryCard("✨", "推荐歌单", "每日为你精选", "#fc466b", "#3f5efb");
         recommendCard.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsLoggedIn));
         var recommendTap = new TapGestureRecognizer();
         recommendTap.SetBinding(TapGestureRecognizer.CommandProperty, nameof(NeteaseOnlineMusicViewModel.LoadRecommendPlaylistsCommand));
         recommendCard.GestureRecognizers.Add(recommendTap);
 
-        // 入口卡片容器（窄屏两列三行；宽屏一行五列，由 ApplyWideLayout/ApplyNarrowLayout 重排行列归属）
-        entryContainer = new Grid
+        // 异步加载各卡背景封面（官方首页同款：取推荐列表第一项封面；失败保持渐变兜底）
+        _ = LoadEntryCoverAsync(fmCard, "fm");
+        _ = LoadEntryCoverAsync(dailyCard, "daily");
+        _ = LoadEntryCoverAsync(toplistCard, "toplist");
+        _ = LoadEntryCoverAsync(myCard, "my");
+        _ = LoadEntryCoverAsync(recommendCard, "recommend");
+
+        // 入口卡片容器：竖版大卡横向滑动（仿网易云首页横滑卡），宽窄屏通用
+        entryContainer = new ScrollView
         {
-            Padding = new Thickness(16, 2, 16, 6),
-            ColumnSpacing = 10,
-            RowSpacing = 10,
-            ColumnDefinitions = new ColumnDefinitionCollection
+            Orientation = ScrollOrientation.Horizontal,
+            Content = new HorizontalStackLayout
             {
-                new() { Width = GridLength.Star },
-                new() { Width = GridLength.Star },
+                Spacing = 12,
+                Padding = new Thickness(16, 2, 16, 6),
+                Children = { fmCard, dailyCard, toplistCard, myCard, recommendCard },
             },
-            RowDefinitions = new RowDefinitionCollection
-            {
-                new() { Height = GridLength.Auto },
-                new() { Height = GridLength.Auto },
-                new() { Height = GridLength.Auto },
-            },
-            Children = { fmCard, dailyCard, toplistCard, myCard, recommendCard },
         };
-        Grid.SetRow(fmCard, 0); Grid.SetColumn(fmCard, 0);
-        Grid.SetRow(dailyCard, 0); Grid.SetColumn(dailyCard, 1);
-        Grid.SetRow(toplistCard, 1); Grid.SetColumn(toplistCard, 0);
-        Grid.SetRow(myCard, 1); Grid.SetColumn(myCard, 1);
-        Grid.SetRow(recommendCard, 2); Grid.SetColumn(recommendCard, 0);
 
         // ── 分类 chips（水平滚动，仅歌单广场可见）──
         var categoriesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 4, 16, 6) };
@@ -556,7 +550,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             else RestoreSearchRow();
         }
 
-        // ③ 横屏或宽屏（≥900）：入口卡片一行五列
+        // ③ 横屏或宽屏（≥900）：搜索行合一（入口卡为横滑容器，无需重排）
         bool wide = w >= 900 || landscape;
         if (wide != _isWideLayout)
         {
@@ -564,9 +558,6 @@ public class NeteaseOnlineMusicPage : ContentPage
             if (wide) ApplyWideLayout(w);
             else ApplyNarrowLayout();
         }
-
-        // ④ 入口卡片：横屏/宽屏正方形（高度 = 列宽，封顶 126）；竖屏窄屏为横屏卡片的四分之一高度
-        UpdateEntryCardHeights(w);
     }
 
     /// <summary>歌单网格视图：外层 CollectionView 虚拟化「行」（LinearItemsLayout），
@@ -653,69 +644,25 @@ public class NeteaseOnlineMusicPage : ContentPage
         return view;
     }
 
-    /// <summary>入口卡片尺寸与布局：横屏/宽屏正方形（高度 = 列宽，超大屏封顶）；竖屏窄屏高度 = 横屏卡片四分之一。</summary>
-    private void UpdateEntryCardHeights(double w)
+    /// <summary>入口卡片为横滑固定尺寸大卡，不再随宽度调整（历史响应式逻辑随网格布局移除）。</summary>
+
+    /// <summary>异步拉取入口大卡背景封面：成功后显示封面并隐藏大图标（渐变兜底）。</summary>
+    private async Task LoadEntryCoverAsync(NeteaseUiKit.EntryCard card, string entryId)
     {
-        var cards = new[] { fmCard, dailyCard, toplistCard, myCard, recommendCard };
-        if (!_isWideLayout)
+        try
         {
-            // 竖屏窄屏：横屏卡片高度（按估算横屏宽度 2w 计算）的四分之一，约 32-37px，最小 35px
-            double landscapeCard = Math.Min((2 * w - 72) / 5, 126);
-            double h = Math.Max(landscapeCard / 4, 35);
-            foreach (var card in cards)
-            {
-                card.HeightRequest = h;
-                ApplyCompactEntryLayout(card);
-            }
-            return;
+            var url = await _vm.Plugin.GetEntryCoverUrlAsync(entryId);
+            if (string.IsNullOrWhiteSpace(url) || card.HeroCover == null) return;
+            card.HeroCover.Source = NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance.Convert(
+                url, typeof(ImageSource), null, System.Globalization.CultureInfo.CurrentCulture) as ImageSource;
+            card.HeroCover.IsVisible = card.HeroCover.Source != null;
+            if (card.HeroCover.Source != null && card.HeroIcon != null)
+                card.HeroIcon.IsVisible = false;
         }
-        double cardWidth = (w - 32 - 4 * 10) / 5; // 宽屏：5 列，4 个 10px 间距
-        if (cardWidth <= 0) return;
-        double cardHeight = Math.Min(cardWidth, 126);
-        foreach (var card in cards)
-        {
-            card.HeightRequest = cardHeight;
-            ApplySquareEntryLayout(card);
-        }
+        catch { }
     }
 
-    /// <summary>竖屏窄屏：入口卡片切换为单行「图标 + 标题」，副标题隐藏。</summary>
-    private static void ApplyCompactEntryLayout(Border card)
-    {
-        if (card is not NeteaseUiKit.EntryCard entry || entry.Layout is not { } l) return;
-        if (card.Content is HorizontalStackLayout) return; // 已是单行布局
-        l.Stack.Children.Clear(); // 先从旧布局移除，避免 child already has a parent
-        l.IconLabel.FontSize = 18;
-        l.TitleLabel.FontSize = 12;
-        l.SubtitleLabel.IsVisible = false;
-        var compact = new HorizontalStackLayout
-        {
-            Spacing = 6,
-            HorizontalOptions = LayoutOptions.Center,
-            VerticalOptions = LayoutOptions.Center,
-        };
-        compact.Children.Add(l.IconLabel);
-        compact.Children.Add(l.TitleLabel);
-        card.Content = compact;
-    }
-
-    /// <summary>横屏/宽屏：入口卡片恢复正方形垂直布局（图标 + 标题 + 副标题）。</summary>
-    private static void ApplySquareEntryLayout(Border card)
-    {
-        if (card is not NeteaseUiKit.EntryCard entry || entry.Layout is not { } l) return;
-        if (ReferenceEquals(card.Content, l.Stack)) return; // 已是垂直布局
-        if (card.Content is HorizontalStackLayout compact)
-            compact.Children.Clear(); // 先从单行布局移除，避免 child already has a parent
-        l.IconLabel.FontSize = 26;
-        l.TitleLabel.FontSize = 13;
-        l.SubtitleLabel.IsVisible = true;
-        l.Stack.Children.Add(l.IconLabel);
-        l.Stack.Children.Add(l.TitleLabel);
-        l.Stack.Children.Add(l.SubtitleLabel);
-        card.Content = l.Stack;
-    }
-
-    /// <summary>宽屏（≥900 或横屏）：搜索行合一、入口卡片一行五列、歌曲/歌手多列网格。</summary>
+    /// <summary>宽屏（≥900 或横屏）：搜索行合一、歌曲/歌手多列网格。</summary>
     private void ApplyWideLayout(double w)
     {
         // 搜索行：一行两列 [Entry | chips]（横屏时搜索元素在头部行，此配置供恢复竖屏使用）
@@ -736,17 +683,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             searchModesLayout.Padding = new Thickness(0);
         }
 
-        // 入口卡片：一行五列
-        entryContainer.ColumnDefinitions.Clear();
-        for (int i = 0; i < 5; i++)
-            entryContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
-        entryContainer.RowDefinitions.Clear();
-        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        SetEntryCardCell(fmCard, 0, 0);
-        SetEntryCardCell(dailyCard, 0, 1);
-        SetEntryCardCell(toplistCard, 0, 2);
-        SetEntryCardCell(myCard, 0, 3);
-        SetEntryCardCell(recommendCard, 0, 4);
+        // 入口卡片：横滑容器，宽窄屏通用，无需重排
         // 歌曲/歌手列表恒为线性单列（GridItemsLayout 在 WinUI 不可靠）
     }
 
@@ -771,26 +708,8 @@ public class NeteaseOnlineMusicPage : ContentPage
             searchModesLayout.Padding = new Thickness(16, 0, 16, 6);
         }
 
-        // 入口卡片：两列三行
-        entryContainer.ColumnDefinitions.Clear();
-        entryContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
-        entryContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
-        entryContainer.RowDefinitions.Clear();
-        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        entryContainer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        SetEntryCardCell(fmCard, 0, 0);
-        SetEntryCardCell(dailyCard, 0, 1);
-        SetEntryCardCell(toplistCard, 1, 0);
-        SetEntryCardCell(myCard, 1, 1);
-        SetEntryCardCell(recommendCard, 2, 0);
+        // 入口卡片：横滑容器，宽窄屏通用
         // 歌曲列表恒为线性单列（GridItemsLayout 在 WinUI 不可靠）
-    }
-
-    private static void SetEntryCardCell(Border card, int row, int column)
-    {
-        Grid.SetRow(card, row);
-        Grid.SetColumn(card, column);
     }
 
     /// <summary>横屏：搜索框 + chips 并入头部行（隐藏标题腾位），释放 contentGrid 一整行纵向空间。</summary>

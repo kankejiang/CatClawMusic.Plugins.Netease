@@ -76,7 +76,7 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     public string PluginId => "netEaseMusic";
     public string Name => "网易云音乐";
-    public string Version => "0.3.15";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
+    public string Version => "0.3.16";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
     public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词/下载）";
     public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like", "download" };
@@ -682,6 +682,36 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>歌单评论（最新，offset 翻页）。</summary>
     public Task<List<SongComment>> GetPlaylistCommentsAsync(string playlistId, int limit = 20, int offset = 0)
         => _client.GetPlaylistCommentsAsync(playlistId, limit, offset);
+
+    private static readonly Dictionary<string, string> _entryCoverCache = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 入口大卡背景封面（官方首页同款）：每日推荐/私人漫游取推荐列表第一首的封面，
+    /// 排行榜/我的歌单/推荐歌单取第一个歌单的封面。进程内缓存，失败返回 null（渐变兜底）。
+    /// </summary>
+    public async Task<string?> GetEntryCoverUrlAsync(string entryId)
+    {
+        if (_entryCoverCache.TryGetValue(entryId, out var hit)) return hit;
+        try
+        {
+            string? cover = entryId switch
+            {
+                "fm" => (await GetPrivateFmAsync(1))?.FirstOrDefault()?.CoverUrl,
+                "daily" => (await GetDailyRecommendAsync(1))?.FirstOrDefault()?.CoverUrl,
+                "toplist" => (await GetToplistsAsync())?.FirstOrDefault()?.CoverUrl,
+                "my" => (await GetUserPlaylistsAsync())?.FirstOrDefault()?.CoverUrl,
+                "recommend" => (await GetRecommendPlaylistsAsync())?.FirstOrDefault()?.CoverUrl,
+                _ => null,
+            };
+            if (!string.IsNullOrWhiteSpace(cover))
+            {
+                _entryCoverCache[entryId] = cover;
+                return cover;
+            }
+        }
+        catch { }
+        return null;
+    }
 
     /// <summary>eapi 返回的实际档位 level → 显示名（与请求档位不同说明发生了回落）</summary>
     private static string? LevelLabel(string? level) => level?.ToLowerInvariant() switch
