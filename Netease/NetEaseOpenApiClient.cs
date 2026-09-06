@@ -503,7 +503,7 @@ public class NeteaseOpenApiClient
                 ["id"] = playlistId,
                 ["n"] = 100000,
                 ["s"] = 8,
-            }, _cookie);
+            }, _cookie, rawCipherResponse: true); // 实测此接口响应为裸密文（非 base64），解密路径错了会静默回退网页版
             if (string.IsNullOrWhiteSpace(raw)) return null;
             using var doc = JsonDocument.Parse(raw);
             if (!doc.RootElement.TryGetProperty("playlist", out var pl) || pl.ValueKind != JsonValueKind.Object)

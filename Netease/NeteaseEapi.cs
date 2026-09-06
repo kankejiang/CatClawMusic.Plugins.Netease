@@ -150,7 +150,7 @@ internal static class NeteaseEapi
         return await RequestAsync(http, "/eapi/v3/song/detail", new Dictionary<string, object>
         {
             ["c"] = c,
-        }, userCookie);
+        }, userCookie, rawCipherResponse: true);
     }
 
     // ── 内部 ──
