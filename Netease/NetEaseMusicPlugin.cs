@@ -1,3 +1,4 @@
+using System.Text;
 using CatClawMusic.Core.Interfaces;
 using CatClawMusic.Core.Models;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,13 +9,17 @@ namespace CatClawMusic.Plugins.Netease;
 /// 网易云音乐音源插件：官方接口（老 web API 匿名优先 + 可选 Cookie），
 /// 覆盖搜索（歌曲/歌单/歌手）/ 歌单广场（分类+分页）/ 歌单内歌曲 / 排行榜 /
 /// 歌手热门歌曲/专辑 / 专辑歌曲 / 播放直链（音质三档 + 三级兜底 + 缓存）/ 歌词 /
-/// 私人漫游（无限电台 + 垃圾桶）/ 每日推荐（歌曲+歌单）/ 我的歌单 / 红心 / 听歌打卡。
+/// 私人漫游（无限电台 + 垃圾桶）/ 每日推荐（歌曲+歌单）/ 我的歌单 / 红心 / 听歌打卡 / 音乐下载。
 /// <para>
 /// 同时实现 <see cref="IViewContributorPlugin"/>：向宿主贡献一个完整的"网易云音乐"入口页面，
 /// 由插件自治提供 UI 和业务逻辑。
 /// </para>
+/// <para>
+/// 另实现 <see cref="IMenuContributorPlugin"/>：向宿主播放页「更多」菜单贡献「下载音乐」入口，
+/// 取链后交给宿主内置下载中心（<c>IDownloadManager</c>）落盘，不自建下载逻辑。
+/// </para>
 /// </summary>
-public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, ILyricsProviderPlugin, IQuickEntryPlugin
+public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, ILyricsProviderPlugin, IQuickEntryPlugin, IMenuContributorPlugin
 {
     private readonly NeteaseOpenApiClient _client = new();
 
@@ -23,6 +28,9 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
 
     /// <summary>整页 VM 插件级单例（FM 电台常驻，页面开关不影响电台与补货）</summary>
     private static NeteaseOnlineMusicViewModel? _sharedVm;
+
+    /// <summary>宿主 IServiceProvider 缓存（入口页/快捷入口创建时注入；菜单回调解析下载管理器用）</summary>
+    private static IServiceProvider? _hostServices;
 
     // ── 私人漫游推荐模式（DEFAULT/FAMILIAR/EXPLORE + 36 场景模式）──
     private static readonly Dictionary<string, string> FmModeLabels = new()
@@ -70,8 +78,8 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     public string Name => "网易云音乐";
     public string Version => "0.3.12";  // 与 GitHub Release tag 同步；插件管理页显示此版本，便于用户确认装的版本
     public string Author => "CatClawMusic";
-    public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词）";
-    public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like" };
+    public string Description => "网易云官方接口（搜索/歌单/歌手/排行榜/漫游/每日推荐/红心/播放/歌词/下载）";
+    public List<string> Capabilities => new() { "search", "play", "lyrics", "playlist", "fm", "daily", "artist", "album", "quality", "like", "download" };
 
     /// <summary>当前音质档位（0=标准 128k，1=高品 320k，2=无损 FLAC；登录增强）</summary>
     public int QualityLevel { get; private set; } = 1;
@@ -138,6 +146,9 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>获取插件级单例 VM（快捷入口与入口页面共用；首次创建时解析宿主播放服务）</summary>
     private NeteaseOnlineMusicViewModel GetSharedVm(IServiceProvider services)
     {
+        // 缓存宿主服务提供者：菜单回调（OnMenuItemClicked）拿不到 services 参数，
+        // 下载功能需要经它解析 IDownloadManager
+        _hostServices = services;
         if (_sharedVm != null) return _sharedVm;
         var queue = services.GetRequiredService<CatClawMusic.Core.Services.PlayQueue>();
         var audioPlayer = services.GetRequiredService<CatClawMusic.Core.Interfaces.IAudioPlayerService>();
@@ -564,6 +575,179 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
     /// <summary>听歌打卡（静默失败）</summary>
     public Task ScrobbleAsync(string songId, long durationMs)
         => _client.ScrobbleAsync(songId, durationMs);
+
+    // ── IMenuContributorPlugin：播放页「更多」菜单的「下载音乐」入口 ──
+
+    /// <summary>「下载音乐」菜单项 ID（与宿主内置菜单项号段错开）</summary>
+    private const int MenuIdDownload = 2001;
+
+    /// <summary>允许写入文件名的音频扩展名白名单（避免 URL 尾部异常片段被当成扩展名）</summary>
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { "mp3", "flac", "m4a", "aac", "ogg", "wav", "wma", "ape" };
+
+    /// <summary>音质档位显示名（下载入队提示用）</summary>
+    private static string QualityLabel(int level) => level switch
+    {
+        0 => "标准 128k",
+        2 => "无损 FLAC",
+        _ => "高品 320k",
+    };
+
+    /// <summary>
+    /// 贡献菜单项：仅网易云来源歌曲（RemoteId 形如 "netease:{id}"）显示「下载音乐」，
+    /// 本地歌与 WebDAV/其它平台歌不显示，避免点了却拿不到直链。
+    /// </summary>
+    public List<MenuItemEntry> GetMenuItems(Song song)
+    {
+        if (song == null || ExtractNeteaseSongId(song.RemoteId) == null)
+            return new List<MenuItemEntry>();
+        return new List<MenuItemEntry> { new(MenuIdDownload, "下载音乐") };
+    }
+
+    /// <summary>菜单点击回调：取直链后交给宿主下载中心</summary>
+    public async Task OnMenuItemClicked(int itemId, Song song, object fragment)
+    {
+        if (itemId != MenuIdDownload || song == null) return;
+        await DownloadSongAsync(song);
+    }
+
+    /// <summary>
+    /// 下载当前歌曲：按插件当前音质档位取直链 → 交给宿主 <see cref="IDownloadManager"/> 落盘。
+    /// 下载进度/暂停/续传/目录设置全部由宿主下载中心负责，插件只负责取链与命名。
+    /// </summary>
+    private async Task DownloadSongAsync(Song song)
+    {
+        var songId = ExtractNeteaseSongId(song.RemoteId);
+        if (songId == null) return;
+
+        var manager = ResolveDownloadManager();
+        if (manager == null)
+        {
+            await NotifyAsync("下载失败", "无法访问宿主下载服务，请更新猫爪音乐到新版本。");
+            return;
+        }
+
+        var quality = QualityLevel;
+        string? url;
+        try { url = await _client.GetPlayUrlAsync(songId, quality); }
+        catch (Exception ex)
+        {
+            Log.Debug("NeteasePlugin", $"[Download] 取链异常: {ex.Message}");
+            url = null;
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            await NotifyAsync("下载失败", "获取播放直链失败，该歌曲可能无版权或需要登录。");
+            return;
+        }
+
+        manager.EnqueueUrl(url, BuildDownloadFileName(song, GuessExtension(url, quality)));
+        await NotifyAsync("已加入下载队列", $"{song.Title}\n{QualityLabel(quality)}");
+    }
+
+    /// <summary>
+    /// 严格解析网易云 songId：RemoteId 必须为 "netease:{id}" 形式。
+    /// 与歌词兜底用的 <see cref="ExtractNeteaseId"/> 不同——那里由宿主按平台路由后才调用，
+    /// 这里需避免把 WebDAV 等其它来源的 RemoteId 误当成网易云 id。
+    /// </summary>
+    private static string? ExtractNeteaseSongId(string? remoteId)
+    {
+        const string prefix = "netease:";
+        if (string.IsNullOrWhiteSpace(remoteId)) return null;
+        if (!remoteId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var id = remoteId.Substring(prefix.Length).Trim();
+        return id.Length > 0 ? id : null;
+    }
+
+    /// <summary>解析宿主下载管理器（Core 接口，实现位于 CatClawMusic.Maui）</summary>
+    private static IDownloadManager? ResolveDownloadManager()
+    {
+        var services = _hostServices ?? ResolveHostServicesViaMaui();
+        if (services == null) return null;
+        try { return services.GetService<IDownloadManager>(); }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// 兜底获取宿主 DI：用户未打开过插件页面时（例如从「私人漫游」快捷入口直接播放），
+    /// _hostServices 尚未注入，改从 MAUI Application 的 Handler.MauiContext 取。
+    /// </summary>
+    private static IServiceProvider? ResolveHostServicesViaMaui()
+    {
+        try
+        {
+            // 插件只引用 Microsoft.Maui.Controls（Microsoft.Maui.Core 的类型不在编译引用里），
+            // 故经反射取 Handler.MauiContext.Services；任一步失败即放弃，不影响其它功能。
+            var app = Microsoft.Maui.Controls.Application.Current;
+            if (app == null) return null;
+            foreach (var owner in new[] { (object?)app, FirstWindow(app) })
+            {
+                if (owner == null) continue;
+                var handler = owner.GetType().GetProperty("Handler")?.GetValue(owner);
+                var mauiContext = handler?.GetType().GetProperty("MauiContext")?.GetValue(handler);
+                if (mauiContext?.GetType().GetProperty("Services")?.GetValue(mauiContext) is IServiceProvider sp)
+                    return _hostServices = sp;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>取主窗口（桌面端 Application.Handler 常为 null，需退到 Window 上取 Handler）</summary>
+    private static object? FirstWindow(Microsoft.Maui.Controls.Application app)
+    {
+        try { return app.Windows.Count > 0 ? app.Windows[0] : null; }
+        catch { return null; }
+    }
+
+    /// <summary>构造下载文件名："标题 - 艺术家.ext"（清理非法字符，宿主入队时还会再 Sanitize 一次）</summary>
+    private static string BuildDownloadFileName(Song song, string ext)
+    {
+        var title = SanitizeFilePart(song.Title);
+        if (string.IsNullOrWhiteSpace(title)) title = "未命名";
+        var artist = SanitizeFilePart(song.Artist);
+        var name = string.IsNullOrWhiteSpace(artist) ? title : $"{title} - {artist}";
+        return $"{name}.{ext}";
+    }
+
+    /// <summary>清理文件名非法字符（Windows/Unix 通用，另去掉首尾空白与点号）</summary>
+    private static string SanitizeFilePart(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        var sb = new StringBuilder(raw.Length);
+        foreach (var ch in raw)
+        {
+            sb.Append(ch is '<' or '>' or ':' or '"' or '/' or '\\' or '|' or '?' or '*' || char.IsControl(ch)
+                ? '_'
+                : ch);
+        }
+        return sb.ToString().Trim().TrimEnd('.');
+    }
+
+    /// <summary>从直链推断扩展名；URL 无有效扩展名时按音质档位回退（无损 flac，其余 mp3）</summary>
+    private static string GuessExtension(string url, int quality)
+    {
+        try
+        {
+            var ext = Path.GetExtension(new Uri(url).AbsolutePath)?.TrimStart('.').ToLowerInvariant();
+            if (!string.IsNullOrEmpty(ext) && AllowedExtensions.Contains(ext)) return ext;
+        }
+        catch { }
+        return quality == 2 ? "flac" : "mp3";
+    }
+
+    /// <summary>轻量提示。宿主桌面端无 Shell（Shell.Current 为 null），走主窗口 Page 的 DisplayAlert</summary>
+    private static async Task NotifyAsync(string title, string message)
+    {
+        try
+        {
+            var app = Microsoft.Maui.Controls.Application.Current;
+            var page = app != null && app.Windows.Count > 0 ? app.Windows[0].Page : null;
+            if (page != null) await page.DisplayAlertAsync(title, message, "好");
+        }
+        catch { }
+    }
 
     // ── 浏览器登录 ──
 
