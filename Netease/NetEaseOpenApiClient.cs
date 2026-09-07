@@ -290,6 +290,109 @@ public class NeteaseOpenApiClient
         catch { return new List<OnlinePlaylist>(); }
     }
 
+    /// <summary>
+    /// 歌手分类列表（GET /api/artist/list?categoryCode=…，实测匿名可用）。
+    /// categoryCode 编码：华语 1001男/1002女/1003组合，欧美 2001/2002/2003，
+    /// 日本 6001/6002/6003，韩国 7001/7002/7003，其他 4001/4002/4003（-1 全部实测不可用）。
+    /// initial 首字母参数在老 web GET 下不生效，暂不做字母索引。
+    /// </summary>
+    public async Task<List<NeteaseArtist>> GetArtistsByCategoryAsync(int categoryCode, int limit = 30, int offset = 0)
+    {
+        try
+        {
+            var url = $"https://music.163.com/api/artist/list?categoryCode={categoryCode}&limit={limit}&offset={offset}";
+            using var doc = await GetJsonAsync(url);
+            if (doc == null || !doc.RootElement.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array)
+                return new List<NeteaseArtist>();
+            var list = new List<NeteaseArtist>();
+            foreach (var a in artists.EnumerateArray())
+            {
+                if (!a.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                list.Add(new NeteaseArtist
+                {
+                    Id = idEl.GetInt64().ToString(),
+                    Name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    PicUrl = CoverWithSize(ToHttps(a.TryGetProperty("img1v1Url", out var p) ? p.GetString() : null), 300),
+                    SongCount = a.TryGetProperty("musicSize", out var ms) && ms.TryGetInt32(out var msv) ? msv : 0,
+                    AlbumCount = a.TryGetProperty("albumSize", out var abs) && abs.TryGetInt32(out var absv) ? absv : 0,
+                });
+            }
+            return list;
+        }
+        catch { return new List<NeteaseArtist>(); }
+    }
+
+    /// <summary>热门歌手（GET /api/artist/top，作为歌手页「热门」分类）</summary>
+    public async Task<List<NeteaseArtist>> GetTopArtistsAsync(int limit = 30, int offset = 0)
+    {
+        try
+        {
+            var url = $"https://music.163.com/api/artist/top?limit={limit}&offset={offset}";
+            using var doc = await GetJsonAsync(url);
+            if (doc == null || !doc.RootElement.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array)
+                return new List<NeteaseArtist>();
+            var list = new List<NeteaseArtist>();
+            foreach (var a in artists.EnumerateArray())
+            {
+                if (!a.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                list.Add(new NeteaseArtist
+                {
+                    Id = idEl.GetInt64().ToString(),
+                    Name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    PicUrl = CoverWithSize(ToHttps(a.TryGetProperty("img1v1Url", out var p) ? p.GetString() : null), 300),
+                    SongCount = a.TryGetProperty("musicSize", out var ms) && ms.TryGetInt32(out var msv) ? msv : 0,
+                    AlbumCount = a.TryGetProperty("albumSize", out var abs) && abs.TryGetInt32(out var absv) ? absv : 0,
+                });
+            }
+            return list;
+        }
+        catch { return new List<NeteaseArtist>(); }
+    }
+
+    /// <summary>
+    /// 排行榜聚合详情（GET /api/toplist/detail）：全部榜单 + 更新频率，一次请求。
+    /// 匿名下 tracks 预览多为空壳，Top3 由调用方按需经 GetPlaylistSongsAsync 补齐。
+    /// </summary>
+    public async Task<List<ToplistBlock>> GetToplistBlocksAsync()
+    {
+        try
+        {
+            using var doc = await GetJsonAsync("https://music.163.com/api/toplist/detail");
+            if (doc == null || !doc.RootElement.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array)
+                return new List<ToplistBlock>();
+            var result = new List<ToplistBlock>();
+            foreach (var t in list.EnumerateArray())
+            {
+                if (!t.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                var block = new ToplistBlock
+                {
+                    Playlist = new OnlinePlaylist
+                    {
+                        Id = idEl.GetInt64().ToString(),
+                        Platform = "netease",
+                        Name = t.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                        CoverUrl = CoverWithSize(ToHttps(t.TryGetProperty("coverImgUrl", out var c) ? c.GetString() : null), 300),
+                        Description = t.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null,
+                        SongCount = t.TryGetProperty("total", out var tc) && tc.TryGetInt32(out var tcv) ? tcv : 0,
+                    },
+                    UpdateFrequency = t.TryGetProperty("updateFrequency", out var uf) ? uf.GetString() ?? "" : "",
+                };
+                if (t.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var s in tracks.EnumerateArray())
+                    {
+                        var song = ParseSong(s);
+                        if (song != null) block.TopSongs.Add(song);
+                        if (block.TopSongs.Count >= 3) break;
+                    }
+                }
+                result.Add(block);
+            }
+            return result;
+        }
+        catch { return new List<ToplistBlock>(); }
+    }
+
     /// <summary>歌手搜索（cloudsearch type=100）</summary>
     public async Task<List<NeteaseArtist>> SearchArtistsAsync(string keyword, int limit = 20)
     {
@@ -1616,7 +1719,7 @@ public class NeteaseOpenApiClient
         if (pl.TryGetProperty(coverField, out var c1)) cover = c1.GetString();
         if (cover == null && pl.TryGetProperty("coverImgUrl", out var c2)) cover = c2.GetString();
         if (cover == null && pl.TryGetProperty("picUrl", out var c3)) cover = c3.GetString();
-        return new OnlinePlaylist
+        return new NeteasePlaylist
         {
             Id = pl.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "",
             Platform = "netease",
@@ -1624,6 +1727,7 @@ public class NeteaseOpenApiClient
             CoverUrl = CoverWithSize(ToHttps(cover), 300),
             Description = pl.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null,
             SongCount = pl.TryGetProperty("trackCount", out var tc) && tc.TryGetInt32(out var tcv) ? tcv : 0,
+            PlayCount = pl.TryGetProperty("playCount", out var pc) && pc.TryGetInt64(out var pcv) ? pcv : null,
         };
     }
 

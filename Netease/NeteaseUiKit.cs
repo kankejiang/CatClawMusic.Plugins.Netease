@@ -721,6 +721,350 @@ public static class NeteaseUiKit
             => throw new NotSupportedException();
     }
 
+    // ── 首页改版组件（精选/榜单/歌手 tab，仿官方首页）──
+
+    /// <summary>播放量格式化：43364 → 4.3万，120450000 → 1.2亿；&lt;1 万显示原数。</summary>
+    public static string FormatPlayCount(long n) => n switch
+    {
+        >= 100_000_000 => $"{n / 100_000_000.0:0.#}亿",
+        >= 10_000 => $"{n / 10_000.0:0.#}万",
+        _ => n.ToString("0"),
+    };
+
+    /// <summary>
+    /// 横版封面入口卡（仿官方首页 150×104：封面铺满 + 左下角标题条，粗标题 + 细副题）。
+    /// HeroCover/HeroIcon 语义与 HeroEntryCard 一致（异步贴封面成功后隐藏图标）。
+    /// </summary>
+    public static EntryCard CreateCoverEntryCard(string icon, string title, string subtitle,
+        string color1, string color2, bool showPlay = false)
+    {
+        var iconLabel = new Label
+        {
+            Text = icon,
+            FontSize = 12,
+            TextColor = Colors.White,
+            VerticalOptions = LayoutOptions.End,
+            Margin = new Thickness(0, 0, 4, 1),
+        };
+        var titleLabel = new Label
+        {
+            Text = title,
+            FontSize = 12.5f,
+            FontFamily = "OpenSansSemibold",
+            TextColor = Colors.White,
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            VerticalOptions = LayoutOptions.End,
+        };
+        var subtitleLabel = new Label
+        {
+            Text = subtitle,
+            FontSize = 9.5f,
+            TextColor = Color.FromArgb("#CCFFFFFF"),
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            VerticalOptions = LayoutOptions.End,
+            Margin = new Thickness(0, 1, 0, 0),
+        };
+        var titleRow = new HorizontalStackLayout { Children = { iconLabel, titleLabel } };
+        var textStack = new VerticalStackLayout
+        {
+            Spacing = 0,
+            VerticalOptions = LayoutOptions.End,
+            Margin = new Thickness(9, 0, 9, 8),
+            Children = { titleRow, subtitleLabel },
+        };
+
+        var card = new EntryCard
+        {
+            WidthRequest = 150,
+            HeightRequest = 104,
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 12 },
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(color1), 0f),
+                    new GradientStop(Color.FromArgb(color2), 1f),
+                },
+            },
+        };
+
+        var heroCover = new Image { Aspect = Aspect.AspectFill, IsVisible = false, InputTransparent = true };
+        var bottomFade = new BoxView
+        {
+            Background = new LinearGradientBrush(
+                new GradientStopCollection
+                {
+                    new(Colors.Transparent, 0f),
+                    new(Color.FromArgb("#D9000000"), 1f),
+                },
+                new Point(0, 0), new Point(0, 1)),
+            VerticalOptions = LayoutOptions.End,
+            HeightRequest = 56,
+        };
+
+        var content = new Grid();
+        content.Add(heroCover);
+        content.Add(bottomFade);
+        content.Add(textStack);
+        card.HeroCover = heroCover;
+        card.HeroIcon = iconLabel;
+        if (showPlay)
+        {
+            var play = new Border
+            {
+                StrokeThickness = 0,
+                StrokeShape = new RoundRectangle { CornerRadius = 11 },
+                WidthRequest = 22, HeightRequest = 22,
+                BackgroundColor = Color.FromArgb("#33FFFFFF"),
+                HorizontalOptions = LayoutOptions.End,
+                VerticalOptions = LayoutOptions.End,
+                Margin = new Thickness(0, 0, 8, 8),
+                Content = new Label
+                {
+                    Text = "▶", TextColor = Colors.White, FontSize = 9,
+                    HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center,
+                },
+            };
+            content.Add(play);
+        }
+        card.Content = content;
+        return card;
+    }
+
+    /// <summary>
+    /// 角标歌单卡（仿官方首页：正方形封面 + 左上播放量角标 + 底部两行标题）。
+    /// 绑定 <see cref="NeteasePlaylist"/>（PlayCount 为子类扩展属性，运行时反射取值）。
+    /// </summary>
+    public static View CreatePlaylistCornerCard(double width, ICommand? tapCommand = null)
+    {
+        var coverBorder = new Border
+        {
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 10 },
+            HeightRequest = width,
+        };
+        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var coverImage = new Image { Aspect = Aspect.AspectFill, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlinePlaylist.CoverUrl),
+            converter: OnlineUrlToStreamImageConverter.Instance)
+        { TargetNullValue = "ic_music_note" });
+        coverBorder.Content = coverImage;
+
+        var countLabel = new Label
+        {
+            FontSize = 9.5f,
+            TextColor = Colors.White,
+            VerticalOptions = LayoutOptions.Center,
+            Margin = new Thickness(0, -1, 0, 0),
+        };
+        countLabel.SetBinding(Label.TextProperty, new Binding(nameof(NeteasePlaylist.PlayCount),
+            converter: PlayCountTextConverter.Instance));
+        var countPill = new Border
+        {
+            BackgroundColor = Color.FromArgb("#66000000"),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 8 },
+            Padding = new Thickness(5, 1),
+            HorizontalOptions = LayoutOptions.Start,
+            VerticalOptions = LayoutOptions.Start,
+            Margin = new Thickness(6, 5, 0, 0),
+            Content = new HorizontalStackLayout { Spacing = 2, Children = { new Label { Text = "▶", FontSize = 8, TextColor = Colors.White, VerticalOptions = LayoutOptions.Center }, countLabel } },
+        };
+        countPill.SetBinding(VisualElement.IsVisibleProperty, new Binding(nameof(NeteasePlaylist.PlayCount),
+            converter: PlayCountVisibleConverter.Instance));
+
+        var coverGrid = new Grid { Children = { coverBorder, countPill } };
+
+        var nameLabel = new Label
+        {
+            FontSize = 10.5f,
+            LineHeight = 14,
+            MaxLines = 2,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            Padding = new Thickness(2, 5, 2, 0),
+            HeightRequest = 34,
+        };
+        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        nameLabel.SetBinding(Label.TextProperty, nameof(OnlinePlaylist.Name));
+
+        var card = new Border
+        {
+            Padding = new Thickness(0),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 12 },
+            WidthRequest = width,
+        };
+        card.SetDynamicResource(Border.BackgroundColorProperty, "CardBackgroundColor");
+        card.Content = new VerticalStackLayout { Spacing = 0, Children = { coverGrid, nameLabel } };
+
+        if (tapCommand != null)
+        {
+            var tap = new TapGestureRecognizer { Command = tapCommand };
+            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            card.GestureRecognizers.Add(tap);
+        }
+        return card;
+    }
+
+    /// <summary>榜单色块卡（横滑直达榜单；渐变按索引取固定色板，Binding 歌单名）。</summary>
+    public static View CreateToplistColorCard(int index, ICommand? tapCommand = null)
+    {
+        (string C1, string C2)[] palette =
+        {
+            ("#FF8A80", "#E8443F"), ("#FFD180", "#F0A13A"), ("#FF9EC2", "#F2669E"),
+            ("#8C9EFF", "#5348D4"), ("#B39DDB", "#5B46C9"), ("#82B1FF", "#3F51B5"),
+        };
+        var (c1, c2) = palette[index % palette.Length];
+        var card = new Border
+        {
+            WidthRequest = 118,
+            HeightRequest = 118,
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 12 },
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(c1), 0f),
+                    new GradientStop(Color.FromArgb(c2), 1f),
+                },
+            },
+            Content = new Label
+            {
+                FontSize = 14.5f,
+                FontFamily = "OpenSansSemibold",
+                TextColor = Colors.White,
+                HorizontalTextAlignment = TextAlignment.Center,
+                VerticalTextAlignment = TextAlignment.Center,
+                MaxLines = 2,
+                LineBreakMode = LineBreakMode.TailTruncation,
+                Padding = new Thickness(8, 0),
+            },
+        };
+        ((Label)card.Content!).SetBinding(Label.TextProperty, nameof(OnlinePlaylist.Name));
+        if (tapCommand != null)
+        {
+            var tap = new TapGestureRecognizer { Command = tapCommand };
+            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            card.GestureRecognizers.Add(tap);
+        }
+        return card;
+    }
+
+    /// <summary>
+    /// 官方榜 Top3 卡：标题 + 更新频率 + 前三首（封面缩略 + 歌名 - 歌手）。
+    /// 绑定 <see cref="ToplistBlock"/>；整卡点击打开榜单（复用歌单详情页链路）。
+    /// </summary>
+    public static View CreateToplistTop3Card(ICommand? tapCommand = null)
+    {
+        var nameLabel = new Label { FontSize = 14, FontFamily = "OpenSansSemibold", VerticalOptions = LayoutOptions.Center };
+        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        nameLabel.SetBinding(Label.TextProperty, new Binding(nameof(ToplistBlock.Playlist) + "." + nameof(OnlinePlaylist.Name)));
+
+        var freqLabel = new Label { FontSize = 10, VerticalOptions = LayoutOptions.Center, HorizontalOptions = LayoutOptions.End };
+        freqLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
+        freqLabel.SetBinding(Label.TextProperty, nameof(ToplistBlock.UpdateFrequency));
+
+        var rowTemplate = new DataTemplate(() =>
+        {
+            var cover = new Border
+            {
+                WidthRequest = 32, HeightRequest = 32,
+                StrokeThickness = 0,
+                StrokeShape = new RoundRectangle { CornerRadius = 6 },
+                HorizontalOptions = LayoutOptions.Center,
+            };
+            cover.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+            var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 32, HeightRequest = 32 };
+            coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl),
+                converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 100)
+            { TargetNullValue = "ic_music_note" });
+            cover.Content = coverImage;
+            var title = new Label { FontSize = 11, MaxLines = 1, LineBreakMode = LineBreakMode.TailTruncation, VerticalOptions = LayoutOptions.Center };
+            title.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+            title.SetBinding(Label.TextProperty, new Binding(nameof(OnlineSong.Title)));
+            var artist = new Label { FontSize = 10, MaxLines = 1, LineBreakMode = LineBreakMode.TailTruncation, VerticalOptions = LayoutOptions.Center };
+            artist.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
+            artist.SetBinding(Label.TextProperty, new Binding(nameof(OnlineSong.Artist)));
+            return new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitionCollection
+                {
+                    new() { Width = GridLength.Auto },
+                    new() { Width = new GridLength(2, GridUnitType.Star) },
+                    new() { Width = new GridLength(1, GridUnitType.Star) },
+                },
+                ColumnSpacing = 8,
+                Padding = new Thickness(0, 3),
+                Children = { cover, title, artist },
+            };
+        });
+        var songsHost = new VerticalStackLayout { Spacing = 0 };
+        songsHost.SetBinding(BindableLayout.ItemsSourceProperty, new Binding(nameof(ToplistBlock.TopSongs)));
+        BindableLayout.SetItemTemplate(songsHost, rowTemplate);
+
+        var card = new Border
+        {
+            Padding = new Thickness(12, 10),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 12 },
+        };
+        card.SetDynamicResource(Border.BackgroundColorProperty, "CardBackgroundColor");
+        card.Content = new VerticalStackLayout { Spacing = 6, Children = { new Grid { Children = { nameLabel, freqLabel } }, songsHost } };
+
+        if (tapCommand != null)
+        {
+            var tap = new TapGestureRecognizer { Command = tapCommand };
+            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding(nameof(ToplistBlock.Playlist)));
+            card.GestureRecognizers.Add(tap);
+        }
+        return card;
+    }
+
+    /// <summary>歌手圆头像卡（圆形头像 + 名字 + 单曲数），用于歌手 tab 双列网格。</summary>
+    public static View CreateArtistAvatarCard(double width, ICommand? tapCommand = null)
+    {
+        var d = width - 24;
+        var avatarBorder = new Border
+        {
+            WidthRequest = d,
+            HeightRequest = d,
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = d / 2 },
+            HorizontalOptions = LayoutOptions.Center,
+        };
+        avatarBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var avatarImage = new Image { Aspect = Aspect.AspectFill };
+        avatarImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseArtist.PicUrl),
+            converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 300)
+        { TargetNullValue = "ic_music_note" });
+        avatarBorder.Content = avatarImage;
+
+        var nameLabel = new Label { FontSize = 13, FontFamily = "OpenSansSemibold", HorizontalTextAlignment = TextAlignment.Center, MaxLines = 1, LineBreakMode = LineBreakMode.TailTruncation, Margin = new Thickness(0, 8, 0, 0) };
+        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        nameLabel.SetBinding(Label.TextProperty, nameof(NeteaseArtist.Name));
+
+        var songLabel = new Label { FontSize = 10.5f, HorizontalTextAlignment = TextAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+        songLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
+        songLabel.SetBinding(Label.TextProperty, new Binding(nameof(NeteaseArtist.SongCount), stringFormat: "单曲: {0}"));
+
+        var card = new VerticalStackLayout { Children = { avatarBorder, nameLabel, songLabel } };
+        if (tapCommand != null)
+        {
+            var tap = new TapGestureRecognizer { Command = tapCommand };
+            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            card.GestureRecognizers.Add(tap);
+        }
+        return card;
+    }
+
     /// <summary>
     /// 在线 URL → 内存 Stream 封面（不落盘缓存）。在线歌曲封面下载到内存字节，
     /// 再用内存字典缓存避免重复下载；进程退出后自动释放，不会在本地堆积缓存文件或产生显示错误。
@@ -782,6 +1126,30 @@ public static class NeteaseUiKit
             try { return await Http.GetByteArrayAsync(url).ConfigureAwait(false); }
             catch { return null; }
         }
+    }
+
+    /// <summary>播放量角标文本：long? → 「▶ 4.3万」样式的数字部分；null → 空串。</summary>
+    internal sealed class PlayCountTextConverter : IValueConverter
+    {
+        public static readonly PlayCountTextConverter Instance = new();
+
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => value is long n && n > 0 ? FormatPlayCount(n) : "";
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>播放量角标可见性：有播放量（>0）才显示角标。</summary>
+    internal sealed class PlayCountVisibleConverter : IValueConverter
+    {
+        public static readonly PlayCountVisibleConverter Instance = new();
+
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => value is long n && n > 0;
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotSupportedException();
     }
 }
 

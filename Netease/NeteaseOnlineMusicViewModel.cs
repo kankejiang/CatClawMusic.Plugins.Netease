@@ -279,6 +279,304 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     /// <summary>歌手搜索结果</summary>
     public ObservableCollection<NeteaseArtist> Artists { get; } = new();
 
+    // ── 首页 Tab（精选 / 歌单广场 / 排行榜 / 歌手，仿官方首页）──
+
+    public ObservableCollection<string> HomeTabs { get; } = new() { "精选", "歌单广场", "排行榜", "歌手" };
+
+    [ObservableProperty]
+    private int _selectedTabIndex;
+
+    [ObservableProperty]
+    private bool _showFeatured = true;
+
+    [ObservableProperty]
+    private bool _showSquare;
+
+    [ObservableProperty]
+    private bool _showToplists;
+
+    [ObservableProperty]
+    private bool _showArtistTab;
+
+    partial void OnSelectedTabIndexChanged(int value)
+    {
+        ShowFeatured = value == 0;
+        ShowSquare = value == 1;
+        ShowToplists = value == 2;
+        ShowArtistTab = value == 3;
+        switch (value)
+        {
+            case 0 when FeaturedPlaylists.Count == 0: _ = LoadFeaturedAsync(); break;
+            case 1 when Playlists.Count == 0: _ = LoadPlaylistsAsync(); break;
+            case 2 when ToplistBlocks.Count == 0: _ = LoadToplistTabAsync(); break;
+            case 3 when TabArtistRows.Count == 0: _ = ResetTabArtistsAsync(); break;
+        }
+    }
+
+    /// <summary>tab 切换（页面 tab 栏调用）</summary>
+    [RelayCommand]
+    public Task SelectTabAsync(object? tab) => Task.Run(() =>
+    {
+        var idx = tab is int i ? i : HomeTabs.IndexOf(tab as string ?? "");
+        if (idx >= 0) SelectedTabIndex = idx;
+    });
+
+    // ── 精选 tab：入口卡沿用页面内置；三排角标歌单（推荐歌单/音乐新发现/你可能喜欢）──
+
+    public ObservableCollection<OnlinePlaylist> FeaturedPlaylists { get; } = new();
+    public ObservableCollection<OnlinePlaylist> DiscoveryPlaylists { get; } = new();
+    public ObservableCollection<OnlinePlaylist> DailyPlaylists { get; } = new();
+
+    /// <summary>三排共用翻页游标：每排占广场推荐流一页，换一批整体后移 3 页</summary>
+    private int _featuredBasePage;
+
+    /// <summary>精选 tab 首次进入加载（OnSelectedTabIndexChanged 触发）</summary>
+    [RelayCommand]
+    public async Task LoadFeaturedAsync()
+    {
+        _featuredBasePage = 0;
+        await FillFeaturedAsync();
+    }
+
+    /// <summary>换一批（推荐歌单/你可能喜欢共用，整体翻页）</summary>
+    [RelayCommand]
+    public async Task ShuffleFeaturedAsync()
+    {
+        _featuredBasePage += 3;
+        await FillFeaturedAsync();
+    }
+
+    private async Task FillFeaturedAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            var p = _featuredBasePage + 1;
+            var t1 = _plugin.GetPlaylistsPageAsync(null, p);
+            var t2 = _plugin.GetPlaylistsPageAsync(null, p + 1);
+            var t3 = _plugin.GetPlaylistsPageAsync(null, p + 2);
+            SetCollection(FeaturedPlaylists, await t1);
+            SetCollection(DiscoveryPlaylists, await t2);
+            SetCollection(DailyPlaylists, await t3);
+        }
+        catch { }
+        finally { IsLoading = false; }
+    }
+
+    private static void SetCollection<T>(ObservableCollection<T> target, List<T>? items)
+    {
+        target.Clear();
+        if (items == null) return;
+        foreach (var i in items) target.Add(i);
+    }
+
+    // ── 排行榜 tab：色块横滑（全部榜单）+ 官方榜 Top3 卡 ──
+
+    public ObservableCollection<OnlinePlaylist> ToplistColors { get; } = new();
+    public ObservableCollection<ToplistBlock> ToplistBlocks { get; } = new();
+
+    [RelayCommand]
+    public async Task LoadToplistTabAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            var blocks = await _plugin.ApiClient.GetToplistBlocksAsync();
+            ToplistBlocks.Clear();
+            ToplistColors.Clear();
+            foreach (var b in blocks)
+            {
+                ToplistBlocks.Add(b);
+                ToplistColors.Add(b.Playlist);
+            }
+            // 匿名 toplist/detail 不带预览曲目：前 6 个官方榜并行补拉 Top3
+            var need = ToplistBlocks.Where(b => b.TopSongs.Count == 0).Take(6).ToList();
+            var results = await Task.WhenAll(need.Select(async b =>
+                (Block: b, Songs: await _plugin.GetPlaylistSongsAsync(b.Playlist, 1, 3))));
+            foreach (var (block, songs) in results)
+                if (songs != null)
+                    foreach (var s in songs.Take(3))
+                        block.TopSongs.Add(s);
+        }
+        catch { }
+        finally { IsLoading = false; }
+    }
+
+    /// <summary>榜单色块/Top3 卡点击 → 直接复用歌单详情页打开（榜单可当歌单）</summary>
+    [RelayCommand]
+    public Task OpenToplistAsync(object? item) => OpenPlaylistAsync(item as OnlinePlaylist);
+
+    // ── 歌手 tab：地区/性别 chips + 圆头像双列网格（分页加载）──
+
+    /// <summary>歌手网格行（与歌单分块同思路：外层虚拟化行 + 行内水平排卡片）</summary>
+    public sealed class ArtistGridRow
+    {
+        public ObservableCollection<object> Items { get; } = new();
+    }
+
+    public ObservableCollection<CategoryChipItem> ArtistRegions { get; } = new()
+    {
+        new("热门", true), new("华语", false), new("欧美", false),
+        new("日本", false), new("韩国", false), new("其他", false),
+    };
+
+    public ObservableCollection<CategoryChipItem> ArtistGenders { get; } = new()
+    {
+        new("全部", true), new("男歌手", false), new("女歌手", false), new("组合", false),
+    };
+
+    [ObservableProperty]
+    private string _selectedArtistRegion = "热门";
+
+    [ObservableProperty]
+    private string _selectedArtistGender = "全部";
+
+    public ObservableCollection<ArtistGridRow> TabArtistRows { get; } = new();
+
+    public const double ArtistCardWidth = 150;
+    private const double ArtistCardSpacing = 10;
+    private int _artistGridSpan = 2;
+    private int _artistPage;
+    private bool _artistNoMore;
+
+    /// <summary>页面布局回调：按可用宽度推导歌手网格列数</summary>
+    public void SetArtistGridWidth(double availableWidth)
+    {
+        if (availableWidth <= 0) return;
+        var span = (int)Math.Floor((availableWidth + ArtistCardSpacing) / (ArtistCardWidth + ArtistCardSpacing));
+        span = Math.Clamp(span, 2, 6);
+        if (span == _artistGridSpan) return;
+        _artistGridSpan = span;
+        RechunkArtists();
+    }
+
+    private void RechunkArtists()
+    {
+        TabArtistRows.Clear();
+        var all = TabArtistRows.SelectMany(r => r.Items).ToList();
+        foreach (var a in all) AppendArtistRow((NeteaseArtist)a);
+    }
+
+    private void AppendArtistRow(NeteaseArtist artist)
+    {
+        ArtistGridRow? row = TabArtistRows.Count > 0 ? TabArtistRows[^1] : null;
+        if (row == null || row.Items.Count >= _artistGridSpan)
+        {
+            row = new ArtistGridRow();
+            TabArtistRows.Add(row);
+        }
+        row.Items.Add(artist);
+    }
+
+    [RelayCommand]
+    public async Task SelectArtistRegionAsync(string? region)
+    {
+        if (string.IsNullOrWhiteSpace(region) || region == SelectedArtistRegion) return;
+        SelectedArtistRegion = region;
+        foreach (var c in ArtistRegions) c.IsSelected = c.Name == region;
+        await ResetTabArtistsAsync();
+    }
+
+    [RelayCommand]
+    public async Task SelectArtistGenderAsync(string? gender)
+    {
+        if (string.IsNullOrWhiteSpace(gender) || gender == SelectedArtistGender) return;
+        SelectedArtistGender = gender;
+        foreach (var c in ArtistGenders) c.IsSelected = c.Name == gender;
+        await ResetTabArtistsAsync();
+    }
+
+    /// <summary>(地区, 性别) → categoryCode；热门走 /api/artist/top；地区+全部性别 → 三码并行合并</summary>
+    private List<int> ResolveArtistCodes()
+    {
+        if (SelectedArtistRegion == "热门") return new List<int>();
+        return (SelectedArtistRegion, SelectedArtistGender) switch
+        {
+            ("华语", "男歌手") => new List<int> { 1001 },
+            ("华语", "女歌手") => new List<int> { 1002 },
+            ("华语", "组合") => new List<int> { 1003 },
+            ("华语", _) => new List<int> { 1001, 1002, 1003 },
+            ("欧美", "男歌手") => new List<int> { 2001 },
+            ("欧美", "女歌手") => new List<int> { 2002 },
+            ("欧美", "组合") => new List<int> { 2003 },
+            ("欧美", _) => new List<int> { 2001, 2002, 2003 },
+            ("日本", "男歌手") => new List<int> { 6001 },
+            ("日本", "女歌手") => new List<int> { 6002 },
+            ("日本", "组合") => new List<int> { 6003 },
+            ("日本", _) => new List<int> { 6001, 6002, 6003 },
+            ("韩国", "男歌手") => new List<int> { 7001 },
+            ("韩国", "女歌手") => new List<int> { 7002 },
+            ("韩国", "组合") => new List<int> { 7003 },
+            ("韩国", _) => new List<int> { 7001, 7002, 7003 },
+            ("其他", "男歌手") => new List<int> { 4001 },
+            ("其他", "女歌手") => new List<int> { 4002 },
+            ("其他", "组合") => new List<int> { 4003 },
+            (_, "全部") or (_, _) => new List<int> { 4001, 4002, 4003 },
+        };
+    }
+
+    /// <summary>重置歌手列表（切地区/性别）</summary>
+    [RelayCommand]
+    public async Task ResetTabArtistsAsync()
+    {
+        _artistPage = 1;
+        _artistNoMore = false;
+        TabArtistRows.Clear();
+        await LoadMoreArtistsAsync();
+    }
+
+    /// <summary>歌手网格滚到底部加载下一页</summary>
+    [RelayCommand]
+    public async Task LoadMoreArtistsAsync()
+    {
+        if (_artistNoMore || _isLoadingMore) return;
+        _isLoadingMore = true;
+        IsLoading = true;
+        try
+        {
+            const int perPage = 30;
+            var codes = ResolveArtistCodes();
+            List<NeteaseArtist> batch;
+            if (codes.Count == 0)
+            {
+                batch = await _plugin.ApiClient.GetTopArtistsAsync(perPage, (_artistPage - 1) * perPage);
+            }
+            else if (codes.Count == 1)
+            {
+                batch = await _plugin.ApiClient.GetArtistsByCategoryAsync(codes[0], perPage, (_artistPage - 1) * perPage);
+            }
+            else
+            {
+                // 地区 + 全部性别：三码各取一半并交错合并，避免按分类整块聚簇
+                var tasks = codes.Select(c => _plugin.ApiClient.GetArtistsByCategoryAsync(c, perPage / 2, (_artistPage - 1) * perPage / 2));
+                var groups = await Task.WhenAll(tasks);
+                batch = groups.SelectMany(x => x).ToList();
+            }
+            if (batch.Count == 0)
+            {
+                _artistNoMore = true;
+                return;
+            }
+            _artistPage++;
+            foreach (var a in batch) AppendArtistRow(a);
+        }
+        catch { }
+        finally
+        {
+            _isLoadingMore = false;
+            IsLoading = false;
+        }
+    }
+
+    /// <summary>歌手头像卡点击 → 打开歌手页（热门歌曲 + 专辑）</summary>
+    [RelayCommand]
+    public async Task OpenTabArtistAsync(object? item)
+    {
+        if (item is not NeteaseArtist artist || string.IsNullOrWhiteSpace(artist.Id)) return;
+        try { await NeteaseNav.PushAsync(new NeteaseArtistPage(artist, _plugin, _services)); }
+        catch { }
+    }
+
     // ── 歌曲列表模式 ──
 
     [ObservableProperty]
@@ -341,8 +639,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public async Task OnAppearingAsync()
     {
         await LoadLoginStateAsync();
-        _ = LoadCategoriesAsync(); // 后台刷新官方分类，不阻塞首屏
-        await LoadPlaylistsAsync();
+        _ = LoadCategoriesAsync(); // 广场官方分类后台刷新（切到广场 tab 时已就绪）
+        await LoadFeaturedAsync(); // 默认精选 tab
     }
 
     // ── 分类 ──

@@ -1,4 +1,28 @@
+using CatClawMusic.Core.Models;
+
 namespace CatClawMusic.Plugins.Netease;
+
+/// <summary>
+/// 网易云歌单（扩展播放量）。继承 Core 基类保证可与其他 OnlinePlaylist 混用；
+/// 播放量角标 Binding 走运行时反射，宿主 Core 模型无需改动。
+/// </summary>
+public class NeteasePlaylist : OnlinePlaylist
+{
+    /// <summary>累计播放次数（角标显示用；接口未返回时为 null，卡片隐藏角标）</summary>
+    public long? PlayCount { get; set; }
+}
+
+/// <summary>排行榜 tab 的官方榜单块（榜单 + 更新频率 + 前三首预览）</summary>
+public class ToplistBlock
+{
+    public OnlinePlaylist Playlist { get; set; } = new();
+
+    /// <summary>更新频率（如「刚刚更新」「每周四更新」）</summary>
+    public string UpdateFrequency { get; set; } = "";
+
+    /// <summary>榜单前三首（并行预取）</summary>
+    public List<OnlineSong> TopSongs { get; } = new();
+}
 
 /// <summary>歌手信息（cloudsearch type=100 / 歌手搜索）</summary>
 public class NeteaseArtist

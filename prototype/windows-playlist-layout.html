@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网易云插件 · Windows 桌面歌单页布局优化原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    background: #0E1016;
+    color: #22252E;
+    display: flex; flex-direction: column;
+  }
+
+  /* ═══════════ 原型工具条（非应用内容）═══════════ */
+  .proto-bar {
+    height: 52px; flex: none;
+    display: flex; align-items: center; gap: 18px;
+    padding: 0 20px;
+    background: linear-gradient(90deg, #16181F, #1B1E27);
+    border-bottom: 1px solid #262A35;
+    color: #C9CDD6; z-index: 99;
+  }
+  .proto-title { font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #E8ECF3; }
+  .proto-title em { font-style: normal; color: #E8476F; }
+  .segmented {
+    display: flex; background: #22252F; border-radius: 10px; padding: 3px; gap: 2px;
+    border: 1px solid #2E3240;
+  }
+  .segmented button {
+    border: 0; background: transparent; color: #9AA0AC; font-size: 12px; font-weight: 600;
+    padding: 6px 16px; border-radius: 8px; cursor: pointer; transition: all .25s;
+    font-family: inherit;
+  }
+  .segmented button:hover { color: #E8ECF3; }
+  .segmented button.active { background: #E8476F; color: #fff; box-shadow: 0 2px 10px rgba(232,71,111,.45); }
+  .proto-actions { display: flex; gap: 10px; margin-left: auto; align-items: center; }
+  .tool-btn {
+    border: 1px solid #2E3240; background: #22252F; color: #9AA0AC;
+    font-size: 12px; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    transition: all .25s; font-family: inherit; font-weight: 600;
+  }
+  .tool-btn:hover { border-color: #E8476F; color: #E8ECF3; }
+  .tool-btn.on { background: rgba(232,71,111,.15); border-color: #E8476F; color: #FF8FA9; }
+  .stats {
+    font-size: 12px; color: #8A8F9B; background: #1A1D26; border: 1px solid #2A2E3A;
+    padding: 7px 14px; border-radius: 8px; display: flex; gap: 14px; align-items: center;
+  }
+  .stats b { color: #FF8FA9; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .stats .delta { color: #6DE29B; font-weight: 700; }
+  .stats .stat-label { color: #7A7F8C; }
+
+  /* ═══════════ 桌面与窗口 ═══════════ */
+  .desktop { flex: 1; display: flex; align-items: stretch; justify-content: center; padding: 14px 16px 14px; min-height: 0; }
+  .window {
+    flex: 1; max-width: 1480px; min-width: 0;
+    background: #F5F6F8; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+    border: 1px solid #2B2E39;
+    display: flex; flex-direction: column; position: relative;
+  }
+  .titlebar {
+    height: 38px; flex: none; display: flex; align-items: center;
+    background: #EDEFF3; border-bottom: 1px solid #E3E6EB; padding-left: 14px;
+    user-select: none;
+  }
+  .titlebar-app { display: flex; align-items: center; gap: 8px; }
+  .titlebar-app .app-icon {
+    width: 18px; height: 18px; border-radius: 5px;
+    background: linear-gradient(135deg, #EC4C63, #E8476F);
+    display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 800;
+  }
+  .titlebar-app span { font-size: 12px; color: #5A5F6B; font-weight: 600; }
+  .win-controls { margin-left: auto; height: 100%; display: flex; }
+  .win-controls div {
+    width: 46px; height: 100%; display: grid; place-items: center;
+    color: #6A707C; font-size: 11px; cursor: default;
+  }
+  .win-controls div:hover { background: #E2E5EB; }
+  .win-controls .win-close:hover { background: #E81123; color: #fff; }
+
+  /* ═══════════ 应用主体 ═══════════ */
+  .app { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: #F5F6F8; }
+  .app-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+  .app-scroll::-webkit-scrollbar { width: 10px; }
+  .app-scroll::-webkit-scrollbar-thumb { background: #D4D8DE; border-radius: 5px; border: 2px solid #F5F6F8; }
+
+  /* ── 头部行 ── */
+  .app-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px 8px;
+  }
+  .back-btn {
+    width: 34px; height: 34px; border-radius: 12px; background: #FFFFFF;
+    display: grid; place-items: center; font-size: 20px; color: #3A3F4A;
+    box-shadow: 0 1px 3px rgba(20,22,30,.08); cursor: pointer; flex: none;
+    line-height: 1; padding-bottom: 3px; transition: transform .2s;
+  }
+  .back-btn:hover { transform: translateX(-2px); }
+  .app-title { font-size: 16px; font-weight: 700; color: #22252E; white-space: nowrap; }
+  .header-search { display: none; flex: 1; max-width: 460px; }
+  .header-search .search-box { width: 100%; }
+  .header-chips { display: none; gap: 4px; align-items: center; }
+  .header-spacer { flex: 1; }
+  .pill-btn {
+    padding: 7px 14px; border-radius: 14px; background: #FFFFFF; font-size: 12px;
+    font-weight: 600; color: #3A3F4A; white-space: nowrap; cursor: pointer; flex: none;
+    box-shadow: 0 1px 3px rgba(20,22,30,.06);
+  }
+
+  /* ── 搜索行（before 常驻 / after 合并进头部）── */
+  .search-row { padding: 0 16px 6px; }
+  .search-box {
+    display: flex; align-items: center; gap: 10px;
+    background: #FFFFFF; border-radius: 12px; padding: 0 14px; height: 40px;
+    box-shadow: 0 1px 3px rgba(20,22,30,.06);
+    transition: box-shadow .25s, border .25s;
+    border: 1.5px solid transparent;
+  }
+  .search-box:focus-within { border-color: #E8476F; box-shadow: 0 0 0 3px rgba(232,71,111,.12); }
+  .search-box .lens { color: #A0A5B1; font-size: 14px; }
+  .search-box input {
+    border: 0; outline: 0; flex: 1; font-size: 13px; font-family: inherit;
+    background: transparent; color: #22252E;
+  }
+  .search-box input::placeholder { color: #B0B4BF; }
+
+  /* ── 热词行：before 常驻占位 ── */
+  .hotwords-row { padding: 0 16px 4px; }
+  .hotword-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .hotword-chip {
+    padding: 6px 14px; border-radius: 14px; background: rgba(17,17,34,.06);
+    font-size: 12px; color: #5A5F6B; font-weight: 600; white-space: nowrap;
+  }
+
+  /* ── after：搜索联想浮层（聚焦才出现，不占布局）── */
+  .suggest-float {
+    position: absolute; top: 12px; left: 66px; z-index: 30;
+    width: 440px; max-height: 300px; overflow: auto;
+    background: #FFFFFF; border-radius: 14px; padding: 10px;
+    box-shadow: 0 14px 48px rgba(20,22,30,.22), 0 2px 6px rgba(20,22,30,.10);
+    opacity: 0; transform: translateY(-8px) scale(.98); pointer-events: none;
+    transition: opacity .22s, transform .22s;
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .suggest-float.show { opacity: 1; transform: none; pointer-events: auto; }
+  .suggest-float .hint {
+    width: 100%; font-size: 11px; color: #A0A5B1; padding: 2px 6px 6px; font-weight: 600;
+  }
+  .suggest-float .hotword-chip { cursor: pointer; transition: all .2s; }
+  .suggest-float .hotword-chip:hover { background: #FDEEF2; color: #E8476F; }
+
+  /* ── 入口卡片行 ── */
+  .entry-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 4px 16px 8px; }
+  .entry-card {
+    border-radius: 14px; padding: 14px 10px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px;
+    color: #fff; cursor: pointer; position: relative; overflow: hidden;
+    transition: transform .25s, box-shadow .25s;
+  }
+  .entry-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(20,22,30,.18); }
+  .entry-card .e-icon { font-size: 25px; line-height: 1; }
+  .entry-card .e-title { font-size: 13px; font-weight: 700; }
+  .entry-card .e-sub { font-size: 11px; opacity: .85; }
+  .entry-card::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 85% 10%, rgba(255,255,255,.28), transparent 55%);
+    pointer-events: none;
+  }
+  .ec-fm      { background: linear-gradient(135deg, #667eea, #764ba2); }
+  .ec-daily   { background: linear-gradient(135deg, #f7971e, #ffd200); }
+  .ec-toplist { background: linear-gradient(135deg, #f953c6, #b91d73); }
+  .ec-mine    { background: linear-gradient(135deg, #11998e, #38ef7d); }
+  .ec-rec     { background: linear-gradient(135deg, #fc466b, #3f5efb); }
+
+  /* ── 分类行 ── */
+  .cat-row {
+    display: flex; gap: 6px; overflow-x: auto; padding: 2px 16px 8px;
+    scrollbar-width: none;
+  }
+  .cat-row::-webkit-scrollbar { display: none; }
+  .cat-chip {
+    padding: 6px 13px; border-radius: 15px; font-size: 12px; white-space: nowrap;
+    background: #FFFFFF; color: #5A5F6B; font-weight: 600; cursor: pointer; flex: none;
+    box-shadow: 0 1px 2px rgba(20,22,30,.05); transition: all .2s;
+  }
+  .cat-chip:hover { color: #E8476F; }
+  .cat-chip.active { background: #E8476F; color: #fff; box-shadow: 0 3px 10px rgba(232,71,111,.35); }
+
+  /* ── 歌单网格 ── */
+  .grid-wrap { padding: 4px 16px 24px; }
+  .section-head { display: flex; align-items: baseline; gap: 10px; padding: 4px 4px 10px; }
+  .section-head h2 { font-size: 15px; font-weight: 700; color: #22252E; }
+  .section-head span { font-size: 12px; color: #A0A5B1; }
+
+  .playlist-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); }
+  .pl-card {
+    background: #FFFFFF; border-radius: 14px; overflow: hidden; cursor: pointer;
+    box-shadow: 0 1px 3px rgba(20,22,30,.07);
+    transition: transform .25s, box-shadow .25s;
+    animation: cardIn .45s both;
+  }
+  .pl-card:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(20,22,30,.16); }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  .pl-cover { position: relative; aspect-ratio: 1; overflow: hidden; background: #E7E9EE; }
+  .pl-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pl-cover .pl-count {
+    position: absolute; right: 8px; bottom: 8px;
+    background: rgba(12,14,20,.62); color: #fff; font-size: 11px; font-weight: 600;
+    padding: 3px 9px; border-radius: 10px; backdrop-filter: blur(4px);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .pl-cover::after {
+    content: "▶"; position: absolute; right: 10px; top: 10px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(232,71,111,.92); color: #fff; font-size: 12px;
+    display: grid; place-items: center;
+    opacity: 0; transform: scale(.6); transition: all .25s;
+  }
+  .pl-card:hover .pl-cover::after { opacity: 1; transform: none; }
+  .pl-info { padding: 8px 10px 10px; }
+  .pl-name {
+    font-size: 12.5px; font-weight: 600; color: #2C3038; line-height: 1.45;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    min-height: 2.9em;
+  }
+  .pl-meta { font-size: 11px; color: #A0A5B1; margin-top: 3px; }
+
+  /* ═══════════ 模式差异：改造前 ═══════════ */
+  body.mode-before .header-search, body.mode-before .header-chips { display: none; }
+  body.mode-before .app-header .app-title { display: block; }
+  body.mode-before .search-row { display: block; }
+  body.mode-before .hotwords-row { display: block; }
+  body.mode-before .header-spacer { display: block; }
+  body.mode-before .suggest-float { display: none; }
+  body.mode-before .entry-card { height: 150px; }
+  body.mode-before .playlist-grid { grid-template-columns: repeat(2, 1fr); }
+  body.mode-before .pl-card { animation: none; }
+  body.mode-before .pl-cover { aspect-ratio: auto; height: 156px; }
+  body.mode-before .pl-info { padding: 10px 12px 12px; }
+  body.mode-before .pl-name { font-size: 14px; }
+  body.mode-before .pl-meta { font-size: 12px; }
+  body.mode-before .pl-count { font-size: 12px; padding: 4px 10px; }
+
+  /* ═══════════ 模式差异：改善后 ═══════════ */
+  body.mode-after .header-search { display: flex; }
+  body.mode-after .header-chips { display: flex; }
+  body.mode-after .app-header .app-title { display: none; }
+  body.mode-after .search-row { display: none; }
+  body.mode-after .hotwords-row { display: none; }
+  body.mode-after .entry-card { height: 126px; }
+
+  /* ═══════════ 底部播放器 ═══════════ */
+  .player {
+    height: 68px; flex: none; display: flex; align-items: center; gap: 16px;
+    padding: 0 20px;
+    background: rgba(255,244,246,.92); backdrop-filter: blur(18px);
+    border-top: 1px solid rgba(232,71,111,.14);
+  }
+  .player .np { display: flex; align-items: center; gap: 12px; width: 220px; flex: none; }
+  .player .np-cover {
+    width: 44px; height: 44px; border-radius: 10px; overflow: hidden;
+    background: linear-gradient(135deg, #C9CED8, #AEB4C0); box-shadow: 0 2px 8px rgba(20,22,30,.15);
+  }
+  .player .np-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .player .np-title { font-size: 13px; font-weight: 700; color: #2C3038; }
+  .player .np-artist { font-size: 11px; color: #9A5B6A; margin-top: 2px; }
+  .player .ctrls { display: flex; align-items: center; gap: 18px; color: #C25A70; font-size: 17px; flex: none; }
+  .player .ctrls .big {
+    width: 40px; height: 40px; border-radius: 50%; background: #E8476F; color: #fff;
+    display: grid; place-items: center; font-size: 15px;
+    box-shadow: 0 4px 14px rgba(232,71,111,.45);
+  }
+  .player .progress { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .player .progress .time { font-size: 11px; color: #B58794; font-variant-numeric: tabular-nums; flex: none; }
+  .player .track { flex: 1; height: 4px; border-radius: 2px; background: #F2D9DF; position: relative; cursor: pointer; }
+  .player .track .fill { position: absolute; inset: 0 auto 0 0; width: 34%; background: #E8476F; border-radius: 2px; }
+  .player .track .fill::after {
+    content: ""; position: absolute; right: -6px; top: 50%; transform: translateY(-50%);
+    width: 12px; height: 12px; border-radius: 50%; background: #E8476F;
+    box-shadow: 0 0 0 3px rgba(232,71,111,.25);
+  }
+  .player .vol { display: flex; align-items: center; gap: 8px; color: #C25A70; flex: none; }
+  .player .vol .track { width: 90px; flex: none; }
+  .player .vol .track .fill { width: 70%; }
+
+  /* ═══════════ 尺寸标注模式 ═══════════ */
+  body.annotated [data-annot] { position: relative; outline: 1.5px dashed rgba(232,71,111,.55); outline-offset: -1.5px; }
+  body.annotated [data-annot]::before {
+    content: attr(data-annot);
+    position: absolute; left: 4px; top: 4px; z-index: 40;
+    background: #E8476F; color: #fff; font-size: 10.5px; font-weight: 700;
+    padding: 2px 8px; border-radius: 6px; letter-spacing: .02em;
+    box-shadow: 0 2px 8px rgba(232,71,111,.4); pointer-events: none;
+  }
+  .save-badge {
+    display: none; position: absolute; right: 22px; z-index: 41;
+    background: #0E1016; color: #6DE29B; font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: 7px; pointer-events: none;
+    border: 1px solid rgba(109,226,155,.4);
+  }
+  body.annotated .save-badge { display: block; }
+  .save-badge::after {
+    content: ""; position: absolute; left: -5px; top: 50%; transform: translateY(-50%) rotate(45deg);
+    width: 8px; height: 8px; background: #0E1016; border-left: 1px solid rgba(109,226,155,.4); border-bottom: 1px solid rgba(109,226,155,.4);
+  }
+
+  .demo-hint {
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+    background: rgba(14,16,22,.88); color: #C9CDD6; font-size: 12px; font-weight: 600;
+    padding: 8px 18px; border-radius: 20px; z-index: 200;
+    opacity: 0; transition: opacity .4s; pointer-events: none;
+    backdrop-filter: blur(6px); border: 1px solid #2A2E3A;
+  }
+  .demo-hint.show { opacity: 1; }
+  .demo-hint em { color: #FF8FA9; font-style: normal; }
+</style>
+</head>
+<body class="mode-after">
+
+  <!-- ══ 原型工具条 ══ -->
+  <div class="proto-bar">
+    <div class="proto-title">网易云插件 · Windows 桌面歌单页 <em>布局优化原型</em></div>
+    <div class="segmented" id="modeSwitch">
+      <button data-mode="before">改造前（现状）</button>
+      <button data-mode="after" class="active">改善后（方案）</button>
+    </div>
+    <div class="proto-actions">
+      <div class="stats">
+        <span class="stat-label">首屏可见歌单</span><b id="statCount">–</b>
+        <span class="stat-label">内容区高</span><b id="statHeight">–</b>
+        <span id="statDelta" class="delta"></span>
+      </div>
+      <button class="tool-btn" id="annotToggle">尺寸标注</button>
+    </div>
+  </div>
+
+  <!-- ══ 应用窗口 ══ -->
+  <div class="desktop">
+    <div class="window">
+      <div class="titlebar">
+        <div class="titlebar-app">
+          <div class="app-icon">猫</div><span>CatClawMusic · 网易云音乐插件</span>
+        </div>
+        <div class="win-controls">
+          <div>—</div><div>□</div><div class="win-close">✕</div>
+        </div>
+      </div>
+
+      <div class="app">
+        <!-- after 模式：搜索联想浮层（聚焦搜索框时出现，不占布局空间） -->
+        <div class="suggest-float" id="suggestFloat">
+          <div class="hint">热门搜索 · 聚焦时才展开，不再常驻占位</div>
+        </div>
+
+        <div class="app-scroll">
+          <!-- 头部行：before=标题+音质+账号；after=搜索合并进头部 -->
+          <div class="app-header" data-annot="① 头部行">
+            <div class="back-btn">‹</div>
+            <div class="app-title">网易云音乐</div>
+            <div class="header-search">
+              <div class="search-box" id="headerSearchBox">
+                <span class="lens">⌕</span>
+                <input id="headerSearchInput" type="text" placeholder="搜索歌曲 / 歌单 / 歌手...">
+              </div>
+            </div>
+            <div class="header-chips">
+              <span class="cat-chip active" style="background:#FDEEF2;color:#E8476F;box-shadow:none">歌曲</span>
+              <span class="cat-chip">歌单</span>
+              <span class="cat-chip">歌手</span>
+              <span class="cat-chip">无损</span>
+            </div>
+            <div class="header-spacer"></div>
+            <div class="pill-btn">无损</div>
+            <div class="pill-btn">🎧 又搁这熬夜呢</div>
+          </div>
+
+          <!-- 搜索行：仅 before 常驻 -->
+          <div class="search-row" data-annot="② 搜索行（独立占一行）">
+            <div class="search-box">
+              <span class="lens">⌕</span>
+              <input type="text" placeholder="搜索歌曲 / 歌单 / 歌手...">
+            </div>
+          </div>
+
+          <!-- 热词行：仅 before 常驻 -->
+          <div class="hotwords-row" data-annot="③ 热词浮层（空输入也常驻）">
+            <div class="hotword-list" id="hotwordsStatic"></div>
+          </div>
+
+          <!-- 入口卡 -->
+          <div class="entry-row" data-annot="④ 入口卡">
+            <div class="entry-card ec-fm"><div class="e-icon">🎧</div><div class="e-title">私人漫游</div><div class="e-sub">随机推荐</div></div>
+            <div class="entry-card ec-daily"><div class="e-icon">📅</div><div class="e-title">每日推荐</div><div class="e-sub">今天想听什么</div></div>
+            <div class="entry-card ec-toplist"><div class="e-icon">🔥</div><div class="e-title">排行榜</div><div class="e-sub">飙升 · 新歌 · 热歌</div></div>
+            <div class="entry-card ec-mine"><div class="e-icon">💛</div><div class="e-title">我的歌单</div><div class="e-sub">创建与收藏</div></div>
+            <div class="entry-card ec-rec"><div class="e-icon">✨</div><div class="e-title">推荐歌单</div><div class="e-sub">每日为你精选</div></div>
+          </div>
+
+          <!-- 分类行 -->
+          <div class="cat-row" data-annot="⑤ 分类行">
+            <span class="cat-chip active">全部</span>
+          </div>
+
+          <!-- 歌单网格 -->
+          <div class="grid-wrap" data-annot="⑥ 歌单内容区">
+            <div class="section-head">
+              <h2>歌单广场</h2><span id="gridDesc"></span>
+            </div>
+            <div class="playlist-grid" id="playlistGrid"></div>
+          </div>
+        </div>
+
+        <div class="save-badge" id="badgeSearch" style="top:60px">− 54px</div>
+        <div class="save-badge" id="badgeHot" style="top:104px">− 44px</div>
+        <div class="save-badge" id="badgeEntry" style="top:158px">− 24px</div>
+        <div class="save-badge" id="badgeCat" style="top:296px">− 8px</div>
+      </div>
+
+      <!-- 底部播放器 -->
+      <div class="player">
+        <div class="np">
+          <div class="np-cover"><img src="" alt="" id="npCover"></div>
+          <div>
+            <div class="np-title">丑八怪</div>
+            <div class="np-artist">薛之谦</div>
+          </div>
+        </div>
+        <div class="ctrls"><span>⟲</span><span>⏮</span><span class="big">▶</span><span>⏭</span><span>♥</span></div>
+        <div class="progress">
+          <span class="time">0:00</span>
+          <div class="track"><div class="fill"></div></div>
+          <span class="time">4:13</span>
+        </div>
+        <div class="vol"><span>🔊</span><div class="track"><div class="fill"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="demo-hint" id="demoHint"></div>
+
+<script>
+(function () {
+  const IMG_API = "https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image";
+  const img = p => `${IMG_API}?prompt=${encodeURIComponent(p)}&image_size=square_hd`;
+
+  // ── 数据 ──
+  const HOTWORDS = ["甲乙丙丁", "失眠", "姜云升 无题", "海屿你", "颜如玉", "这歌", "莫忙", "给未来的自己", "皇家蓝", "碎碎念"];
+  const CATS = ["全部", "综艺", "流行", "怀旧", "清晨", "华语", "影视原声", "摇滚", "夜晚", "清新", "欧美", "ACG", "民谣", "学习", "浪漫", "儿童", "日语", "工作", "校园", "电子", "韩语", "游戏", "粤语", "伤感", "舞曲", "治愈"];
+  const PLAYLISTS = [
+    { n: "「居家古风」如何把生活过成诗", c: 150, p: "中国传统水墨风歌单封面，茶具与亚麻布艺，柔和的绿色米色调，安静生活美学，摄影质感" },
+    { n: "【曲作精选】致敬古风圈原创曲作人❸", c: 199, p: "深蓝黑色暗调背景上的白色花朵，水面微光反射，情绪化艺术摄影" },
+    { n: "深夜电台｜一个人的城市夜车", c: 88, p: "雨夜城市车窗灯光模糊光斑，霓虹色彩，电影感封面摄影" },
+    { n: "民谣酒馆 · 微醺时刻", c: 64, p: "温暖的木吉他与旧木桌，暖黄灯光，复古民谣氛围封面" },
+    { n: "纯音乐 | 专注学习 BGM", c: 230, p: "极简留白封面，一支钢笔与白纸，柔和晨光，安静学习氛围" },
+    { n: "华语流行 · 周末赖床指南", c: 45, p: "清晨卧室阳光洒进窗帘，慵懒舒适的粉色氛围摄影" },
+    { n: "欧美金曲 · 公路旅行", c: 120, p: "夕阳下空旷公路延伸远方，橙紫天空，旅行氛围摄影" },
+    { n: "ACG 神番 OST 珍藏", c: 76, p: "星空下动漫风格奇幻场景，紫蓝色夜空，唯美插画封面" },
+    { n: "爵士慵懒 · 午后咖啡馆", c: 52, p: "咖啡馆窗边一杯拿铁拉花，午后柔光，生活摄影" },
+    { n: "摇滚现场 · 耳机分你一只", c: 93, p: "舞台灯光下人群剪影，红蓝对比光，摇滚现场摄影" },
+    { n: "粤语经典 · 光辉岁月", c: 67, p: "旧香港霓虹街景夜景，怀旧电影色调，街头摄影" },
+    { n: "电子律动 · 深夜代码", c: 108, p: "深色科技感抽象霓虹网格，蓝紫渐变，电子音乐封面" },
+    { n: "治愈系 | 雨天白噪音", c: 41, p: "雨滴落在窗玻璃上的特写，模糊绿意背景，清新摄影" },
+    { n: "说唱嘻哈 · 拽起来", c: 82, p: "街头涂鸦墙前的篮球，活力橙色色调，嘻哈文化摄影" },
+    { n: "轻音乐 · 睡前一小时", c: 36, p: "月光下的安静湖面，深蓝色调，宁静夜晚摄影" },
+  ];
+
+  // ── 渲染 ──
+  const staticList = document.getElementById("hotwordsStatic");
+  HOTWORDS.forEach(w => { const s = document.createElement("span"); s.className = "hotword-chip"; s.textContent = w; staticList.appendChild(s); });
+
+  const suggestFloat = document.getElementById("suggestFloat");
+  HOTWORDS.forEach(w => { const s = document.createElement("span"); s.className = "hotword-chip"; s.textContent = w; s.onclick = hideSuggest; suggestFloat.appendChild(s); });
+
+  const catRow = document.querySelector(".cat-row");
+  CATS.forEach(c => {
+    const s = document.createElement("span"); s.className = "cat-chip" + (c === "全部" ? " active" : ""); s.textContent = c;
+    s.onclick = () => { catRow.querySelectorAll(".cat-chip").forEach(x => x.classList.remove("active")); s.classList.add("active"); };
+    catRow.appendChild(s);
+  });
+
+  const grid = document.getElementById("playlistGrid");
+  PLAYLISTS.forEach((pl, i) => {
+    const card = document.createElement("div");
+    card.className = "pl-card";
+    card.style.animationDelay = (i * 40) + "ms";
+    card.innerHTML = `
+      <div class="pl-cover" style="background:${coverFallback(i)}">
+        <img loading="lazy" src="${img(pl.p)}" alt="" onerror="this.remove()">
+        <span class="pl-count">♪ ${pl.c}</span>
+      </div>
+      <div class="pl-info">
+        <div class="pl-name">${pl.n}</div>
+        <div class="pl-meta">${pl.c} 首</div>
+      </div>`;
+    grid.appendChild(card);
+  });
+
+  const npCover = document.getElementById("npCover");
+  npCover.src = img("专辑封面，艺术抽象粉蓝渐变纹理，极简设计");
+
+  function coverFallback(i) {
+    const grads = ["linear-gradient(135deg,#D8CFC4,#BFB5A6)", "linear-gradient(135deg,#2B3040,#4A5568)", "linear-gradient(135deg,#7B8FA3,#A8BCCB)", "linear-gradient(135deg,#E8D5B7,#C9A87C)", "linear-gradient(135deg,#EEF1F4,#CDD5DD)"];
+    return grads[i % grads.length];
+  }
+
+  // ── 模式切换 ──
+  const modeSwitch = document.getElementById("modeSwitch");
+  const hint = document.getElementById("demoHint");
+  let hintTimer;
+  function showHint(text, ms = 2600) {
+    hint.innerHTML = text; hint.classList.add("show");
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => hint.classList.remove("show"), ms);
+  }
+
+  modeSwitch.addEventListener("click", e => {
+    const btn = e.target.closest("button[data-mode]"); if (!btn) return;
+    const mode = btn.dataset.mode;
+    document.body.classList.remove("mode-before", "mode-after");
+    document.body.classList.add("mode-" + mode);
+    modeSwitch.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
+    hideSuggest();
+    requestAnimationFrame(updateStats);
+    if (mode === "after") {
+      showHint("已切换到 <em>改善后</em>：搜索并入标题行 · 热词仅聚焦展开 · 入口卡 150→126 · 歌单定宽多列", 3400);
+    } else {
+      showHint("改造前：搜索独立行 + 热词常驻 + 入口卡 150px + <em>2 列巨型卡片</em>", 3400);
+    }
+  });
+
+  // ── after：搜索聚焦展开热词浮层 ──
+  const searchInput = document.getElementById("headerSearchInput");
+  const searchBox = document.getElementById("headerSearchBox");
+  searchInput.addEventListener("focus", () => {
+    if (document.body.classList.contains("mode-after")) suggestFloat.classList.add("show");
+  });
+  document.addEventListener("click", e => {
+    if (!suggestFloat.contains(e.target) && !searchBox.contains(e.target)) hideSuggest();
+  });
+  searchInput.addEventListener("input", e => {
+    const q = e.target.value.trim();
+    suggestFloat.querySelector(".hint").textContent = q ? `“${q}” 的搜索联想（演示）` : "热门搜索 · 聚焦时才展开，不再常驻占位";
+  });
+  function hideSuggest() { suggestFloat.classList.remove("show"); }
+
+  // ── 标注模式 ──
+  document.getElementById("annotToggle").addEventListener("click", function () {
+    document.body.classList.toggle("annotated");
+    this.classList.toggle("on", document.body.classList.contains("annotated"));
+    if (document.body.classList.contains("annotated")) showHint("标注模式：虚线框为各区块，<em>绿色徽章</em>为该行节省的高度", 3000);
+  });
+
+  // ── 统计 ──
+  const statCount = document.getElementById("statCount");
+  const statHeight = document.getElementById("statHeight");
+  const statDelta = document.getElementById("statDelta");
+  const gridDesc = document.getElementById("gridDesc");
+
+  function updateStats() {
+    const scroll = document.querySelector(".app-scroll");
+    const rect = grid.getBoundingClientRect();
+    const scrollTop = scroll.scrollTop;
+    const scrollBottom = scroll.getBoundingClientRect().bottom;
+    const card = grid.querySelector(".pl-card");
+    const colCount = card ? Math.max(1, Math.round(grid.clientWidth / (card.getBoundingClientRect().width + 14))) : 0;
+
+    // 首屏可见：网格底部（相对滚动容器）内完整可见的行数
+    const cardH = card ? card.getBoundingClientRect().height + 14 : 0;
+    const visibleH = Math.max(0, scrollBottom - rect.top + scrollTop - 8);
+    const rows = cardH > 0 ? Math.floor(visibleH / cardH) : 0;
+
+    statCount.textContent = Math.round(rows * colCount) + " 张";
+    statHeight.textContent = Math.round(Math.max(0, scrollBottom - rect.top + scrollTop)) + "px";
+    statDelta.textContent = document.body.classList.contains("mode-after")
+      ? "较改造前 +336px" : "对比基线";
+    gridDesc.textContent = `${colCount} 列 · 卡片定宽 200px（auto-fill 自适应列数）`;
+  }
+
+  document.querySelector(".app-scroll").addEventListener("scroll", () => requestAnimationFrame(updateStats));
+  window.addEventListener("resize", () => requestAnimationFrame(updateStats));
+  setTimeout(() => { updateStats(); showHint("点击搜索框试试：<em>热词改为聚焦时才出现</em>；右上角可开尺寸标注", 4200); }, 600);
+})();
+</script>
+</body>
+</html>

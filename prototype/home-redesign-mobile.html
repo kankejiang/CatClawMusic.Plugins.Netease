@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="qf8PxPSDmGdLokjqH9CxnT">
+<head data-page-node-id="KIMpEBBTSon6zbGYhunFHx">
+<meta charset="UTF-8" data-page-node-id="X477j3XzqpWgBhY9daY4n0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="6uvMxtPLYQmOdBOlBWfVQD">
+<title>网易云插件首页改造原型（手机版式）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0c0c10; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #f2f2f2; display: flex; justify-content: center; padding: 16px 0; }
+  .phone { width: 420px; background: #15151a; min-height: 860px; border-radius: 20px; overflow: hidden; position: relative; }
+  /* 顶栏 */
+  .topbar { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+  .topbar .back { font-size: 20px; color: #ccc; width: 30px; }
+  .topbar .title { font-size: 16px; font-weight: 600; flex: 1; }
+  .pill { background: #23232b; border-radius: 16px; padding: 6px 11px; font-size: 11px; color: #eee; }
+  /* 一级 tab */
+  .tabs { display: flex; gap: 22px; padding: 4px 16px 0; border-bottom: 1px solid #23232b; }
+  .tab { font-size: 14px; color: #9a9aa3; padding: 8px 0 9px; position: relative; cursor: pointer; }
+  .tab.on { color: #fff; font-weight: 600; }
+  .tab.on::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; width: 20px; height: 3px; border-radius: 2px; background: #ec4141; }
+  .page { display: none; padding-bottom: 90px; }
+  .page.on { display: block; }
+  .hscroll { display: flex; gap: 10px; overflow-x: auto; padding: 10px 14px; scrollbar-width: none; }
+  .hscroll::-webkit-scrollbar { display: none; }
+  .sec { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 2px; }
+  .sec .t { font-size: 15px; font-weight: 600; }
+  .sec .more { font-size: 12px; color: #9a9aa3; }
+  /* 精选：入口卡（封面+底条） */
+  .entry { flex: 0 0 auto; width: 150px; }
+  .entry .cover { position: relative; width: 150px; height: 104px; border-radius: 10px; overflow: hidden; background: linear-gradient(135deg, #2b2b35, #1c1c24); }
+  .entry .cover .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30px; opacity: .9; }
+  .entry .bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 5px 8px; font-size: 10.5px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.78)); display: flex; gap: 4px; align-items: flex-end; }
+  .entry .bar b { font-size: 11.5px; white-space: nowrap; }
+  .entry .cap { font-size: 10.5px; color: #9a9aa3; padding: 5px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 歌单横滑卡（播放数角标 + 底部标题） */
+  .pl { flex: 0 0 auto; width: 118px; }
+  .pl .cover { position: relative; width: 118px; height: 118px; border-radius: 9px; background: linear-gradient(135deg,#2e2e38,#1d1d26); display: flex; align-items: center; justify-content: center; font-size: 26px; color: #555; }
+  .pl .cnt { position: absolute; top: 5px; left: 7px; font-size: 9.5px; color: #fff; background: rgba(0,0,0,.42); border-radius: 8px; padding: 1px 6px; }
+  .pl .cap { font-size: 10.5px; color: #cfcfd6; line-height: 1.35; padding: 5px 2px 0; height: 30px; overflow: hidden; }
+  .pl2 { width: 150px; } .pl2 .cover { width: 150px; height: 150px; }
+  /* 广场 chips + 网格 */
+  .chips { display: flex; gap: 8px; padding: 10px 14px 4px; flex-wrap: wrap; }
+  .chip { font-size: 11px; color: #b9b9c2; background: #23232b; border-radius: 13px; padding: 5px 12px; }
+  .chip.on { background: #ec4141; color: #fff; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 10px 14px; }
+  .g .cover { position: relative; width: 100%; aspect-ratio: 1; border-radius: 10px; background: linear-gradient(135deg,#2e2e38,#1d1d26); display: flex; align-items: center; justify-content: center; font-size: 26px; color: #555; }
+  .g .cnt { position: absolute; top: 6px; left: 8px; font-size: 9.5px; background: rgba(0,0,0,.42); border-radius: 8px; padding: 1px 6px; }
+  .g .cap { font-size: 11px; color: #cfcfd6; line-height: 1.4; padding: 6px 2px 0; }
+  /* 榜单色块 */
+  .tc { flex: 0 0 auto; width: 118px; height: 118px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; color: #fff; text-align: center; }
+  /* 官方榜 Top3 卡 */
+  .toplist { background: #1d1d25; border-radius: 12px; margin: 8px 14px; padding: 12px; }
+  .toplist .hd { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .toplist .hd .n { font-size: 14px; font-weight: 600; }
+  .toplist .hd .u { font-size: 10px; color: #8b8b94; }
+  .row { display: flex; gap: 10px; align-items: center; padding: 4px 0; }
+  .row .idx { width: 14px; font-size: 12px; color: #8b8b94; text-align: center; }
+  .row .cv { width: 34px; height: 34px; border-radius: 6px; background: #2b2b35; flex: 0 0 auto; }
+  .row .tt { font-size: 11.5px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .tt span { color: #8b8b94; }
+  .row .st { margin-left: auto; font-size: 9px; color: #ec4141; }
+  /* 歌手 */
+  .ag { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; padding: 12px 24px; }
+  .artist { text-align: center; }
+  .artist .av { width: 130px; height: 130px; margin: 0 auto; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #3a3a46, #22222b); display: flex; align-items: center; justify-content: center; font-size: 34px; color: #666; }
+  .artist .n { font-size: 13px; margin-top: 8px; }
+  .artist .c { font-size: 10.5px; color: #8b8b94; margin-top: 2px; }
+</style>
+</head>
+<body data-page-node-id="m85AkwHZVLDunhhCTNobZu">
+<div class="phone" data-page-node-id="RIB3HFwEbHtGT4eEuUL1aJ">
+  <div class="topbar" data-page-node-id="ZO89pE5vcRnUqCPhVNl2YY">
+    <div class="back" data-page-node-id="H9C2IRdbos3QFAqX7adTfv">‹</div>
+    <div class="title" data-page-node-id="pFn2dJ6WNHli8C6Wd6hbSE">网易云音乐</div>
+    <div class="pill" data-page-node-id="ApjhJ1e2fEMfqLkwxlYADM">🔍</div><div class="pill" data-page-node-id="Aw7zrb2Wc4ik3VRrmY52Sn">极高</div><div class="pill" data-page-node-id="Znwb3AR4ftCvDD06VvwEbH">又搁这熬夜呢</div>
+  </div>
+  <div class="tabs" data-page-node-id="MVHevs1eGFQbbBinxHQey8">
+    <div class="tab on" data-p="p1" data-page-node-id="4teWK18X5YH534mBCG1DPw">精选</div>
+    <div class="tab" data-p="p2" data-page-node-id="gDw3Zjmnm0AAGaEyfUQkJG">歌单广场</div>
+    <div class="tab" data-p="p3" data-page-node-id="RjEc1hc2arjJ2pU9ltdQgr">排行榜</div>
+    <div class="tab" data-p="p4" data-page-node-id="OBuzY4yLEbVUqPUDx8agJw">歌手</div>
+  </div>
+
+  <!-- 精选 -->
+  <div class="page on" id="p1" data-page-node-id="MLVSDZXfIH4lC7qT7h4EOi">
+    <div class="hscroll" data-page-node-id="5rPGRhZA0GGSvIhulFvp5v">
+      <div class="entry" data-page-node-id="I23nYZ8krETZnlS6lSUH9p"><div class="cover" data-page-node-id="JJ4zQ0LYOBYXoeTZcvtgB5"><div class="ph" data-page-node-id="AHCCGMasYJ9CyRmba2enLe">📅</div><div class="bar" data-page-node-id="JWsHbcV9PnMNOWruINaa7c"><b data-page-node-id="y4wAxiWqSuUpkEKalkOOGA">每日推荐</b><span data-page-node-id="5w2PvYHQWepNV3CUPdWtGl">今天听点新的</span></div></div></div>
+      <div class="entry" data-page-node-id="WvT7NNOiPJUZ1ljbKRmvJN"><div class="cover" data-page-node-id="oQbpvH3IbtSmfmOyxfflW5"><div class="ph" data-page-node-id="KzN5zyVL1lChTtcF1Wmrdf">🎧</div><div class="bar" data-page-node-id="CgIsuhx3vfvIjm8ojlyNW2"><b data-page-node-id="5ETidiNqCSwUKqB5RhdS0q">私人漫游</b><span data-page-node-id="E4ylwTgSQaEnBae6a31ZqW">多样频道无限听</span></div></div></div>
+      <div class="entry" data-page-node-id="3YFMgatM8Yft2n3ihHrqR5"><div class="cover" data-page-node-id="9g41uSm19TDzUsmRu4t2wz"><div class="ph" data-page-node-id="DImwLy8fbiJJ9xz9oEJWis">✨</div><div class="bar" data-page-node-id="rXxQBoEpHuiDEVCaoUesRT"><b data-page-node-id="cf6ZbK1FSVy7zJkJaUP4bk">推荐歌单</b><span data-page-node-id="zQhYBeJSRPZYuFYtkm3kWg">每日为你精选</span></div></div></div>
+      <div class="entry" data-page-node-id="OHLCdfjbLnGaDHX5Pt6FGg"><div class="cover" data-page-node-id="J0j3GBAOSJpUkVtm7hjylB"><div class="ph" data-page-node-id="xOEfRzWFHCK4VnVEruag75">💛</div><div class="bar" data-page-node-id="cOU7udUYlm9e5DtjgOQl6X"><b data-page-node-id="gLQWZt8p9AJa2QePjPjM2J">我的歌单</b><span data-page-node-id="FAEuCTYIZ8wXJicEEvaona">创建与收藏</span></div></div></div>
+      <div class="entry" data-page-node-id="PQvONpv0qhZndtBzdbTaw7"><div class="cover" data-page-node-id="rruCZZate4EEDO3oi7YTQ0"><div class="ph" data-page-node-id="ZXVLGu3uBrEXUvTfz05XOJ">🔥</div><div class="bar" data-page-node-id="0TCNOCLAtNb8GDdqOHM6Pf"><b data-page-node-id="gOli6VnC3F3zBAoboriRaG">排行榜</b><span data-page-node-id="Xiliigr3xskIi4x63iWe9j">飙升 · 新歌 · 热歌</span></div></div></div>
+    </div>
+    <div class="sec" data-page-node-id="5HH4nk31UhBExTzuH44KZ9"><div class="t" data-page-node-id="fYAKRSkozzTnHlzFPs4Km1">推荐歌单 ›</div><div class="more" data-page-node-id="WOBVSscbKVnHj23r8QxW7k">换一批 ↻</div></div>
+    <div class="hscroll" data-page-node-id="krItesGTIGiWiE7LYuBZEl">
+      <div class="pl" data-page-node-id="QX0mDVHAvgT4Dm8aTqjJX5"><div class="cover" data-page-node-id="zXFAILJqMrvheLEcGm2BKS">🎵<div class="cnt" data-page-node-id="Iy2ntYzLwvtYJIFszi3b1t">▶ 43.4万</div></div><div class="cap" data-page-node-id="WYfEVVjynhJIsyCCo9RflH">那些超好听的日语主题曲 日系思念</div></div>
+      <div class="pl" data-page-node-id="AGoRKqptxwPHuCh8FyXEMK"><div class="cover" data-page-node-id="iTtZXsmQDP8w9L4Yorhs7N">🎵<div class="cnt" data-page-node-id="TlKgPbJYT7bSCRlrsm9ZpP">▶ 15.0万</div></div><div class="cap" data-page-node-id="Z0yaHXgF54YsZE6i9xS6eQ">日系伤感:廉漓暮雨の物哀余情</div></div>
+      <div class="pl" data-page-node-id="smmRhG56Djnwp2XLbBY4WZ"><div class="cover" data-page-node-id="glNECfYyv2BFR3GCI2Ebju">🎵<div class="cnt" data-page-node-id="BpOZ6Nwk8jhx50HmfOGk2B">▶ 184.4万</div></div><div class="cap" data-page-node-id="B2RjfSE9JfPQTyvv5VdSZX">大表又 最经典的歌曲</div></div>
+      <div class="pl" data-page-node-id="VwFcTsGZrKPd8wbcTOLrwP"><div class="cover" data-page-node-id="UxS0H3fenJazf9z2XunkZ0">🎵<div class="cnt" data-page-node-id="XceVbbO52np3fN2SSCnTs6">▶ 63.5万</div></div><div class="cap" data-page-node-id="VvFijBJuS4FJt0I3k4nmTk">【女声控】极致之美,幻听从双耳的音符</div></div>
+    </div>
+    <div class="sec" data-page-node-id="cJ6HJ99Ha62KGm5CdBadkK"><div class="t" data-page-node-id="EAFSiHQlisrzoDA3Obz1T4">音乐新发现 ›</div><div class="more" data-page-node-id="f4pE30LRAOUJ4Wc1WlRkZt"></div></div>
+    <div class="hscroll" data-page-node-id="C6OSOOxFMcCPLb6QCkAzyi">
+      <div class="pl pl2" data-page-node-id="NeAL63s3W6fAK6sDK37Cif"><div class="cover" data-page-node-id="LQxMgZiEBucXafHMNGwWiJ">🌧<div class="cnt" data-page-node-id="EBs49rZuhkvdvJ9r1lDD4Y">▶ 423.3万</div></div><div class="cap" data-page-node-id="7djbNFv2H4ZRKDcYml3ue2">分手快乐｜听病的不是旋律 是回忆</div></div>
+      <div class="pl pl2" data-page-node-id="fsRNqJWe5htoNP5ip3A5S2"><div class="cover" data-page-node-id="uFvHJ2hZ2kRyVAOSmCKSo8">🎷<div class="cnt" data-page-node-id="l0Wp7EakwNilSDAeVE4VkG">▶ 171.4万</div></div><div class="cap" data-page-node-id="zxWMRckpZGFE3mdjdnD7IY">2010s华语R&amp;B｜重回华语R&amp;B新时代</div></div>
+      <div class="pl pl2" data-page-node-id="SVx5zOlJGu0W6NWoj3EEJW"><div class="cover" data-page-node-id="JtVKoQpC1pWKjL2XkbSjxs">🎹<div class="cnt" data-page-node-id="A7CFzJVrIErNIOctsLwLPy">▶ 54万</div></div><div class="cap" data-page-node-id="1sg7waYGKdVOHEk6fxqq2a">助眠钢琴翻奏｜柔系的欧关旋律 伴你入眠</div></div>
+      <div class="pl pl2" data-page-node-id="bk7yRGReE83f71d4fF9Ydc"><div class="cover" data-page-node-id="vN5gaY9klUC1oqK4umu3eC">💜<div class="cnt" data-page-node-id="RXSd4Hvm6j3vsVoQTt2eYN">▶ 87万</div></div><div class="cap" data-page-node-id="gRoNzVusuCGrkSfptHHVw2">深夜 放轻松｜不插电欧美旋律驱散疲惫</div></div>
+    </div>
+    <div class="sec" data-page-node-id="yfBVCKihKkAk0FGBAad3R6"><div class="t" data-page-node-id="gsjXl7klObuDKf8xuZORXk">你可能喜欢 ›</div><div class="more" data-page-node-id="PjdhOaAacaz0sfTiU6ubFx">换一批 ↻</div></div>
+    <div class="hscroll" data-page-node-id="D5axVAVZxx5tkMR6L58lTf">
+      <div class="pl" data-page-node-id="ABRCfTGzEpE1L9swucpcpf"><div class="cover" data-page-node-id="juBNxbdgiBZDCIXwYBDrse">🎵<div class="cnt" data-page-node-id="mJmTpxUWgPZFEJG4KGGmKi">▶ 11.2万</div></div><div class="cap" data-page-node-id="Bp9tRuPMYlpGLuUAbgoGSa">This is true music 这才是真正的音乐</div></div>
+      <div class="pl" data-page-node-id="9jqt3c1OHFTixo8Admh8dh"><div class="cover" data-page-node-id="F2FjusylyTpU8D5hEiYLuU">🎵<div class="cnt" data-page-node-id="9ksIbrdC2LPpNLyKWgiSFS">▶ 49.8万</div></div><div class="cap" data-page-node-id="mywCBiOaxCoTz787RElH2u">华语民谣精选 · 岁月里的声音</div></div>
+      <div class="pl" data-page-node-id="gh7qJhXm6VIyAsrgABFMFn"><div class="cover" data-page-node-id="krzkm298xsOWiFKVrkNQKV">🎵<div class="cnt" data-page-node-id="T3DXOJBCnW8l1JGKG8uCbr">▶ 984.4万</div></div><div class="cap" data-page-node-id="vNWZ1jLzb8LNQ8JRaF3LES">经典粤语金曲｜光阴的故事</div></div>
+      <div class="pl" data-page-node-id="AIjKMJipD00ZYzJSi6CwC7"><div class="cover" data-page-node-id="zdInitwcgN7ViFyT7Yw7SE">🎵<div class="cnt" data-page-node-id="58KPFVC8S1wwJ7v97nwhbk">▶ 27.1万</div></div><div class="cap" data-page-node-id="jTZbOYKAVvRKqjYcPobPFW">二次元电音企划 ACG 混音精选</div></div>
+    </div>
+  </div>
+
+  <!-- 歌单广场 -->
+  <div class="page" id="p2" data-page-node-id="JXnZF48S2HiJGB3CMQUdEA">
+    <div class="chips" data-page-node-id="Ko511o4XrZWBBvQyaBEit8">
+      <div class="chip on" data-page-node-id="uhiUDsMZF2cIC6guS8rog7">推荐</div><div class="chip" data-page-node-id="U8mPTb7EElzOLZWuDTSEU3">官方</div><div class="chip" data-page-node-id="OU2ktgXX3uXMOTqFxy8CPB">华语</div><div class="chip" data-page-node-id="Xi1gqmNDtdZYuVUbUcK7q7">流行</div><div class="chip" data-page-node-id="0D5KCovEEHEhXiiPteHS3o">摇滚</div><div class="chip" data-page-node-id="ELR1Il5t4mn3dhLyvLaLLH">民谣</div><div class="chip" data-page-node-id="zzDCXfm6wcGbNZ8uySik2t">电子</div><div class="chip" data-page-node-id="TGe5bihQtI6Nl24aZooJIz">ACG</div><div class="chip" data-page-node-id="AEzNMmhgViED0npkqyJYmq">轻音乐</div><div class="chip" data-page-node-id="jWJXmwpUkyQ5oHMX3aTiH6">更多分类 ⌄</div>
+    </div>
+    <div class="grid2" data-page-node-id="OA9WsQ2pxvzf41hq1GTKls">
+      <div class="g" data-page-node-id="HvM0BoQd8yhtGNi4gCy3jI"><div class="cover" data-page-node-id="bEAHuhqHHmz4EuRdIQq5OL">🎵<div class="cnt" data-page-node-id="tiFJv2aBcGqVM3ZMEPUBb6">▶ 37.2万</div></div><div class="cap" data-page-node-id="AnRYoLI6Pw4DG4bcJZXv2K">神仙打架的年代｜一人一首成名曲</div></div>
+      <div class="g" data-page-node-id="ADWZKTB3kBtPTZJKu5YZe8"><div class="cover" data-page-node-id="D3A5CVdVKLwv6DL1EUrr3M">🎵<div class="cnt" data-page-node-id="chlzeSeEntQPEYbMyrsWhu">▶ 99.1万</div></div><div class="cap" data-page-node-id="da6EbfIZp053nzRjVRJSBb">90/00后回忆杀 那些年追过的影视剧主题曲</div></div>
+      <div class="g" data-page-node-id="WQePIKIy5jiCJc8zndsO21"><div class="cover" data-page-node-id="fMHVOFAc2AHC4JoKGCR8v8">🎵<div class="cnt" data-page-node-id="fEqHiAAEkiYwLQh6POOKti">▶ 140.8万</div></div><div class="cap" data-page-node-id="kYZhMgkrKYlWWKYWHH6W4z">经典老歌【神仙打架年代】100首华语金曲</div></div>
+      <div class="g" data-page-node-id="HRGTc4c7F2XxkL76NUjKy7"><div class="cover" data-page-node-id="54zv4hziUfPgyUSZEaMOzV">🎵<div class="cnt" data-page-node-id="cNAWRQwrrO0Z3otIb3PBug">▶ 3.1万</div></div><div class="cap" data-page-node-id="KdhzPwE6IghZR3PcYoiibi">经典TO level【日文原唱】</div></div>
+      <div class="g" data-page-node-id="GFVHBngnVNUIGwIOAw1YHk"><div class="cover" data-page-node-id="7a0EgmJLadVBdC0NdglEf8">🎵<div class="cnt" data-page-node-id="YIZFOBiCJH2EyEvCF5h5xz">▶ 1216万</div></div><div class="cap" data-page-node-id="iOVOPhKsF7yfuEcNBBzMny">2026年度热门歌曲精选</div></div>
+      <div class="g" data-page-node-id="MZ4QpaIkGMfLB7ICJqpeNg"><div class="cover" data-page-node-id="aBLmciDwQCrLoFcB69GJSr">🎵<div class="cnt" data-page-node-id="PVCCJFw9EDDcFexnY3w9Lb">▶ 31.1万</div></div><div class="cap" data-page-node-id="Z7y6e8813mNstGPL6KDiT5">深夜安眠的白噪音与钢琴</div></div>
+    </div>
+  </div>
+
+  <!-- 排行榜 -->
+  <div class="page" id="p3" data-page-node-id="rtBq9MNaN31DeDlWo4sAnX">
+    <div class="sec" data-page-node-id="vAGsFuPRe6ZXOG8Di11UfR"><div class="t" data-page-node-id="5B8w4bomcJumUdqTTf27jP">榜单推荐</div><div class="more" data-page-node-id="7CGr0ni3G9Aq1AVzjEMsOt"></div></div>
+    <div class="hscroll" data-page-node-id="DKNwebB1VaGL0roG5db0L8">
+      <div class="tc" style="background:linear-gradient(135deg,#ff7a7a,#e8443f)" data-page-node-id="l8HFopYaMGYym7FZPOBhCw">中文说唱榜</div>
+      <div class="tc" style="background:linear-gradient(135deg,#ffd76e,#f0a13a)" data-page-node-id="9XU49rTjYhRQQN0Rt1VjZ6">民谣榜</div>
+      <div class="tc" style="background:linear-gradient(135deg,#ff9ec2,#f2669e)" data-page-node-id="jmPUhqmVutqIqnd3fBqmwF">ACG榜</div>
+      <div class="tc" style="background:linear-gradient(135deg,#7d7aff,#5348d4)" data-page-node-id="2fsCMEjpTpiWOt30UmE3wy">日本公信榜</div>
+      <div class="tc" style="background:linear-gradient(135deg,#8f7aff,#5b46c9)" data-page-node-id="yCAx9TphAEXJI2ymCGOzCv">日语榜</div>
+      <div class="tc" style="background:linear-gradient(135deg,#7f8cff,#4a53c8)" data-page-node-id="h08jUo7PTp2YRcnpn7bmiG">欧美热歌榜</div>
+    </div>
+    <div class="sec" data-page-node-id="SCjaygmLvgAmrTmRnBOAFn"><div class="t" data-page-node-id="gRCd7P7glFDnLjikX10wgq">官方榜</div><div class="more" data-page-node-id="DEXYdpTS4U6MuOZ7dJltaE"></div></div>
+    <div class="toplist" data-page-node-id="wu9QVkhjgPBFybqzo9tiXk">
+      <div class="hd" data-page-node-id="IGSSG3eDBdwG49S562WbVa"><div class="n" data-page-node-id="3scNgNuoiGdGWt4lD1P8HG">飙升榜</div><div class="u" data-page-node-id="KsRF3CKY2rMhkB2TOA80SJ">刚刚更新</div></div>
+      <div class="row" data-page-node-id="aMVsV0DgWgjkNKHNHHSajd"><div class="idx" data-page-node-id="AM71KCqZ9L8NzMWC2mUIkM">1</div><div class="cv" data-page-node-id="GmuHoMNixnBs202gffWWLh"></div><div class="tt" data-page-node-id="JyX9iQbVapkzSbo31F0WXh">Boss Life (狂放人生) (Live) <span data-page-node-id="0ZkpHRTMNAuGznC57KTSd5">- 弹壳/Danko</span></div><div class="st" data-page-node-id="QHyFoyHeXByG90whnJWkN4">▲ 新</div></div>
+      <div class="row" data-page-node-id="0VlnfHXsFUlvB1LO33gETf"><div class="idx" data-page-node-id="4hN7uMmHSfttR55YQkUQD5">2</div><div class="cv" data-page-node-id="Ys5LrllXe3GJrGMnDj8oFO"></div><div class="tt" data-page-node-id="SFh2NB2tDAModUOIEXpMjZ">那些我尚未知道的美丽 <span data-page-node-id="XHwJ9UXVa1gC1FlIDgoGdT">- 华晨宇</span></div><div class="st" data-page-node-id="OCvnGL4tFJ17DLApj8HNCu">▲ 新</div></div>
+      <div class="row" data-page-node-id="rfW4j7OODDZr3jmKkIFRKw"><div class="idx" data-page-node-id="bqACJelCKJdqnGRyNbXRdJ">3</div><div class="cv" data-page-node-id="ZiiGIvOxVG9ZddimrtG5Yz"></div><div class="tt" data-page-node-id="npwKDnbvG1P2deYSQ99a0O">凡尔赛恩 <span data-page-node-id="7qmBYZXj6J4GF3Z2AMqtAa">- 麦王唱}-{MSR/动点</span></div><div class="st" data-page-node-id="rRFqzGisb2fHJdJw5YBlEU">▲ 新</div></div>
+    </div>
+    <div class="toplist" data-page-node-id="Elg4jSotEZXIVED5ABaKmW">
+      <div class="hd" data-page-node-id="2bujENbrTdZLIxT2TemWiM"><div class="n" data-page-node-id="LtpOp2ZJ6VuGSNlOQjhAO7">新歌榜</div><div class="u" data-page-node-id="P8iQ7qTO4aem4xP4lGalpO">刚刚更新</div></div>
+      <div class="row" data-page-node-id="S2E6AHXtvhof1joBlDUtYD"><div class="idx" data-page-node-id="UQNiKcOz8BajMHxMqy34vW">1</div><div class="cv" data-page-node-id="1FZo6i7v4mEhxZB4e20Ahw"></div><div class="tt" data-page-node-id="qXY9AVLqIsCKGPJcNzTt8T">互删 (我走以后) <span data-page-node-id="aWJ93P5LG7cz4y66y6WKyM">- 江辰</span></div></div>
+      <div class="row" data-page-node-id="egR9ifTYjAPmsZbHkEQkPi"><div class="idx" data-page-node-id="lWAjVYeobba1gbeLSxKEJO">2</div><div class="cv" data-page-node-id="HXFUpIbCoYGZ6SuxWvixIh"></div><div class="tt" data-page-node-id="d5EfpDpNAu8YakuCpRvzUZ">唯有追赶风的方向 <span data-page-node-id="r7SBsotgvHrEGtn5ywRcTg">- 知更鸟/HOYO-MiX</span></div></div>
+      <div class="row" data-page-node-id="lAD9swnCKKLOVFF3zKgf0N"><div class="idx" data-page-node-id="WLFC9SB26iRT7nLxHav0fX">3</div><div class="cv" data-page-node-id="MriYW6c5bA4T5Bt3C8wHwY"></div><div class="tt" data-page-node-id="iI0tTPYdK42DQ6dDHGfAOW">夏日尽头的我们 <span data-page-node-id="EHHIk7T4h6iWMzUMlClovL">- N3/参递 conduit</span></div></div>
+    </div>
+    <div class="toplist" data-page-node-id="2IQtLPEFb8ElqABHLpqSAY">
+      <div class="hd" data-page-node-id="2GNUJbsZkMoHPZRKhoIjCc"><div class="n" data-page-node-id="RQtmoDbcR2XATyQrnAzKGV">热歌榜</div><div class="u" data-page-node-id="AI5mdTmTkrK9JPK8HbXPNO">每天更新</div></div>
+      <div class="row" data-page-node-id="SvQpeyVrWzVFFMpkI6rOhK"><div class="idx" data-page-node-id="mwXxEy2LpMNy4g71S5RX5l">1</div><div class="cv" data-page-node-id="V22ULKNCDOE2MnQRgAf8gY"></div><div class="tt" data-page-node-id="G3gpPMVbSiR9nAPPZXhhpE">海屿你 <span data-page-node-id="IdkztAzncNuWmfoZF1Obbo">- 马也_Crabbit</span></div></div>
+      <div class="row" data-page-node-id="9aijEsFfYOB4MqK0NQB1gI"><div class="idx" data-page-node-id="AoxrAIuAE4qrsretJ05roI">2</div><div class="cv" data-page-node-id="chi8dzWIcKkSjbVy06WXCG"></div><div class="tt" data-page-node-id="Nx6W4zx9ryRaWrd5BuDc19">甲乙丙 (你怎么样两清) <span data-page-node-id="RJdIAMGcIZEHZCsFOsTZCW">- 李佳隆</span></div></div>
+      <div class="row" data-page-node-id="EWmp4qcdUSngV8jF36cp1j"><div class="idx" data-page-node-id="7Qh99z9nP4yn0SZuO401aG">3</div><div class="cv" data-page-node-id="nTI5zYkSdYnYSZrMiNn8N0"></div><div class="tt" data-page-node-id="0a5kUDsjZl8Qfa0vk7cvcA">罗门丁 (Follow) <span data-page-node-id="0lYDQcXqLP97I0dSEErBhK">- 梨冻/Wiz_张子豪</span></div></div>
+    </div>
+  </div>
+
+  <!-- 歌手 -->
+  <div class="page" id="p4" data-page-node-id="AYcqv3gFK28sOHWwhFz5xG">
+    <div class="chips" data-page-node-id="8PKZH5YbnsskyZEs7yEno1">
+      <div class="chip on" data-page-node-id="qRPDAO5ovcJ4EMyqK9lAKP">全部</div><div class="chip" data-page-node-id="nL5SgdhZB3P9ruQ5ZdrKL8">华语</div><div class="chip" data-page-node-id="jrH0394F9JFUFUYEby7URF">欧美</div><div class="chip" data-page-node-id="n2oM5uK50oG21NQilqWu6L">日本</div><div class="chip" data-page-node-id="BUc0aQvhFpqXqTnNV3ESml">韩国</div><div class="chip" data-page-node-id="CiaRILqlvLRIq9mEoEK02s">其他</div>
+    </div>
+    <div class="chips" style="padding-top:0" data-page-node-id="GNIjGwaotZCQjEmUMZvWHY">
+      <div class="chip on" data-page-node-id="DXvZBRVbNMFP24IMC2jedM">全部</div><div class="chip" data-page-node-id="zBRsoFKtAWAt9GjOSDBo6a">男歌手</div><div class="chip" data-page-node-id="JnoHO2xwYTc8skUjmFNOTP">女歌手</div><div class="chip" data-page-node-id="JLWN4w2pF28ibzhLwvc7x0">乐队组合</div>
+    </div>
+    <div class="chips" style="padding-top:0" data-page-node-id="P2mEEn9rqqKt2e8awSCQYe">
+      <div class="chip on" data-page-node-id="cbCdBQZ4hhs4RrXoFXh1WR">热门</div><div class="chip" data-page-node-id="LmViVIMxbAbF0Wkd8Ri2Ii">A</div><div class="chip" data-page-node-id="oHsrZeWksfDeoZkhgClYZW">B</div><div class="chip" data-page-node-id="U1ODBWXUMkmEY4rc4uWEwG">C</div><div class="chip" data-page-node-id="oMVFf3ctZx6HLj5JlfSGrI">J</div><div class="chip" data-page-node-id="wCQvhoNmhAf42U9xfjBELW">L</div><div class="chip" data-page-node-id="XYFCJQVEc4mTF9HfUmeKmI">S</div><div class="chip" data-page-node-id="qnhh41qPyWot1tRpaJ3UGp">Z</div>
+    </div>
+    <div class="ag" data-page-node-id="ojpyCLeBuIS80aveDSrXoG">
+      <div class="artist" data-page-node-id="Zl2NAeN5NWeorWq7qwVqhS"><div class="av" data-page-node-id="XVCfnS5RkS1QJdaAQHTowe">🎤</div><div class="n" data-page-node-id="RDClKRE1WOEj8dyvFz89QV">林俊杰</div><div class="c" data-page-node-id="NZQS0tijsEhhvQYHlsAfTU">单曲: 598</div></div>
+      <div class="artist" data-page-node-id="BKDNKuDjFKmE6ZfEcSHDT0"><div class="av" data-page-node-id="CEt1t8JaMlyVvEri6S8Rl1">🎤</div><div class="n" data-page-node-id="vGKP1gEGg4BQ5DjNXDi2kp">陈奕迅</div><div class="c" data-page-node-id="OvIv8QM2M1ik88dNMvGj7H">单曲: 1862</div></div>
+      <div class="artist" data-page-node-id="lVw9BAkirl0ESeINUjEPXU"><div class="av" data-page-node-id="UwGCJpEygC5yyVx3rGEpnC">🎤</div><div class="n" data-page-node-id="EzWmh1mbFObGiiiMty8653">薛之谦</div><div class="c" data-page-node-id="mSDfxTe0D4Kb4AmceevD9F">单曲: 310</div></div>
+      <div class="artist" data-page-node-id="mmSw06sg4vCXizUUBRagno"><div class="av" data-page-node-id="4F7aQMqikKFh6wOqXjs84f">🎤</div><div class="n" data-page-node-id="IbEoEYdjgLc5W4ltJVcJXZ">孙燕姿</div><div class="c" data-page-node-id="yGLB0xgsWT0YUknpHEgurf">单曲: 606</div></div>
+      <div class="artist" data-page-node-id="gTpPtIFSCfdqo9QvJKboAS"><div class="av" data-page-node-id="b9Gdgyzhm0zSejRex4O4b4">🎤</div><div class="n" data-page-node-id="4AL2J8ghSj2OnD28IJyVd2">郑润泽</div><div class="c" data-page-node-id="gdy8La2OKz2VEfFggJAy46">单曲: 188</div></div>
+      <div class="artist" data-page-node-id="UqnPdfpQ1GHyyghtkY3sFv"><div class="av" data-page-node-id="jN0RXgNFgVbb57Om7VTb7C">🎤</div><div class="n" data-page-node-id="b7ZqiYOwkkYY9agWQnCKKU">汪苏泷</div><div class="c" data-page-node-id="kMs5inmiayRmdGBbDls9fO">单曲: 724</div></div>
+    </div>
+  </div>
+</div>
+<script>
+  document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("on"));
+    document.querySelectorAll(".page").forEach(x => x.classList.remove("on"));
+    t.classList.add("on");
+    document.getElementById(t.dataset.p).classList.add("on");
+  });
+</script>
+</body>
+</html>
