@@ -440,6 +440,111 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
+    /// <summary>歌手别名（GET /api/artist/{id} 的 alias 数组，如 ["JJ Lin","Wayne Lin"]；失败返回 null）</summary>
+    public async Task<List<string>?> GetArtistAliasesAsync(string artistId)
+    {
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/artist/{artistId}");
+            if (doc == null || !doc.RootElement.TryGetProperty("artist", out var a) || a.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!a.TryGetProperty("alias", out var alias) || alias.ValueKind != JsonValueKind.Array)
+                return null;
+            var list = new List<string>();
+            foreach (var s in alias.EnumerateArray())
+                if (s.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(s.GetString()))
+                    list.Add(s.GetString()!);
+            return list;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// 歌手详情（GET /api/artist/introduction?id=，匿名可用）：一句话简介 + 分节长文
+    /// （演艺经历/代表作品/重要里程碑…每节 txt 为多行文本，按行拆段展示）。
+    /// </summary>
+    public async Task<ArtistIntro?> GetArtistIntroAsync(string artistId)
+    {
+        try
+        {
+            using var doc = await GetJsonAsync($"https://music.163.com/api/artist/introduction?id={artistId}");
+            if (doc == null) return null;
+            var intro = new ArtistIntro();
+            if (doc.RootElement.TryGetProperty("briefDesc", out var bd) && bd.ValueKind == JsonValueKind.String)
+                intro.BriefDesc = bd.GetString() ?? "";
+            if (doc.RootElement.TryGetProperty("introduction", out var sections) && sections.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var s in sections.EnumerateArray())
+                {
+                    var title = s.TryGetProperty("ti", out var ti) ? ti.GetString() ?? "" : "";
+                    var text = s.TryGetProperty("txt", out var tx) ? tx.GetString() ?? "" : "";
+                    if (title.Length == 0 && text.Length == 0) continue;
+                    intro.Sections.Add(new IntroSection { Title = title, Text = text });
+                }
+            }
+            return (intro.BriefDesc.Length > 0 || intro.Sections.Count > 0) ? intro : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>歌手 MV 列表（weapi /api/artist/mv，匿名可用；more 字段指示可翻页）</summary>
+    public async Task<List<NeteaseMv>> GetArtistMvsAsync(string artistId, int limit = 40, int offset = 0)
+    {
+        try
+        {
+            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/artist/mv",
+                new Dictionary<string, object> { ["artistId"] = artistId, ["limit"] = limit, ["offset"] = offset }, _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return new List<NeteaseMv>();
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("mvs", out var mvs) || mvs.ValueKind != JsonValueKind.Array)
+                return new List<NeteaseMv>();
+            var list = new List<NeteaseMv>();
+            foreach (var m in mvs.EnumerateArray())
+            {
+                if (!m.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                list.Add(new NeteaseMv
+                {
+                    Id = idEl.GetInt64().ToString(),
+                    Name = m.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    CoverUrl = CoverWithSize(ToHttps(m.TryGetProperty("imgurl", out var img) ? img.GetString() : null), 400),
+                    PlayCount = m.TryGetProperty("playCount", out var pc) && pc.TryGetInt64(out var pcv) ? pcv : 0,
+                    DurationMs = m.TryGetProperty("duration", out var du) && du.TryGetInt32(out var duv) ? duv : 0,
+                });
+            }
+            return list;
+        }
+        catch { return new List<NeteaseMv>(); }
+    }
+
+    /// <summary>相似歌手（weapi /api/v1/discovery/simiArtist，匿名可用）</summary>
+    public async Task<List<NeteaseArtist>> GetSimilarArtistsAsync(string artistId, int limit = 30)
+    {
+        try
+        {
+            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/v1/discovery/simiArtist",
+                new Dictionary<string, object> { ["artistId"] = artistId, ["limit"] = limit }, _cookie);
+            if (string.IsNullOrWhiteSpace(raw)) return new List<NeteaseArtist>();
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array)
+                return new List<NeteaseArtist>();
+            var list = new List<NeteaseArtist>();
+            foreach (var a in artists.EnumerateArray())
+            {
+                if (!a.TryGetProperty("id", out var idEl) || idEl.ValueKind == JsonValueKind.Null) continue;
+                list.Add(new NeteaseArtist
+                {
+                    Id = idEl.GetInt64().ToString(),
+                    Name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    PicUrl = CoverWithSize(ToHttps(a.TryGetProperty("img1v1Url", out var p) ? p.GetString() : null), 300),
+                    SongCount = a.TryGetProperty("musicSize", out var ms) && ms.TryGetInt32(out var msv) ? msv : 0,
+                    AlbumCount = a.TryGetProperty("albumSize", out var abs) && abs.TryGetInt32(out var absv) ? absv : 0,
+                });
+            }
+            return list;
+        }
+        catch { return new List<NeteaseArtist>(); }
+    }
+
     /// <summary>歌手热门歌曲（/api/artist/top/song）</summary>
     public async Task<List<OnlineSong>?> GetArtistTopSongsAsync(string artistId)
     {

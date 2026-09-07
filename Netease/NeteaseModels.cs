@@ -25,6 +25,31 @@ public class ToplistBlock
     public ObservableCollection<OnlineSong> TopSongs { get; } = new();
 }
 
+/// <summary>歌手 MV（歌手页 MV tab；播放直链经 Plugin.GetMvUrlAsync 按需获取）</summary>
+public class NeteaseMv
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? CoverUrl { get; set; }
+    /// <summary>累计播放次数（角标）</summary>
+    public long PlayCount { get; set; }
+    /// <summary>时长（毫秒）</summary>
+    public int DurationMs { get; set; }
+}
+
+/// <summary>歌手详情（歌手详情 tab）：一句话简介 + 分节长文（演艺经历/代表作品/重要里程碑…）</summary>
+public class ArtistIntro
+{
+    public string BriefDesc { get; set; } = "";
+    public List<IntroSection> Sections { get; } = new();
+}
+
+public class IntroSection
+{
+    public string Title { get; set; } = "";
+    public string Text { get; set; } = "";
+}
+
 /// <summary>歌手信息（cloudsearch type=100 / 歌手搜索）</summary>
 public class NeteaseArtist
 {

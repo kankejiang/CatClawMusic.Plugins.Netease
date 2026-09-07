@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="bHhnPbWZH8aJ1y2wUOzGwD">
+<head data-page-node-id="rVmUtAaY8RpcUCMBPqRlwW">
+<meta charset="UTF-8" data-page-node-id="dcoao9LW7eUyFpi0iINNVO">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="azdKBzpfNX6CNCpCn4486V">
+<title>歌手详情页改造原型（手机版式）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0c0c10; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #f2f2f2; display: flex; justify-content: center; padding: 16px 0; }
+  .phone { width: 420px; background: #15151a; min-height: 900px; border-radius: 20px; overflow: hidden; }
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 14px 6px; }
+  .topbar .back { font-size: 22px; color: #ccc; }
+  .topbar .t { font-size: 15px; font-weight: 600; }
+  /* 头部 */
+  .hero { display: flex; gap: 16px; padding: 10px 16px 14px; align-items: center; }
+  .hero .av { width: 104px; height: 104px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #3a3a46, #22222b); flex: 0 0 auto; }
+  .hero .info { flex: 1; min-width: 0; }
+  .hero .n { font-size: 19px; font-weight: 600; }
+  .hero .alias { font-size: 11.5px; color: #9a9aa3; margin-top: 3px; }
+  .hero .stat { font-size: 11px; color: #8b8b94; margin-top: 3px; }
+  .playall { margin: 0 16px 6px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; background: #ec4141; color: #fff; border-radius: 16px; padding: 7px 16px; font-size: 12.5px; font-weight: 600; }
+  /* 子 tab */
+  .tabs { display: flex; gap: 18px; padding: 4px 16px 0; border-bottom: 1px solid #23232b; overflow-x: auto; }
+  .tab { font-size: 13.5px; color: #9a9aa3; padding: 8px 0 9px; position: relative; white-space: nowrap; cursor: pointer; }
+  .tab sup { font-size: 9px; color: #8b8b94; }
+  .tab.on { color: #fff; font-weight: 600; }
+  .tab.on::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; width: 18px; height: 3px; border-radius: 2px; background: #ec4141; }
+  .page { display: none; padding-bottom: 60px; }
+  .page.on { display: block; }
+  .sec { padding: 12px 16px 4px; font-size: 13.5px; font-weight: 600; color: #e8e8ee; }
+  /* 歌曲 */
+  .song { display: flex; gap: 10px; align-items: center; padding: 7px 14px; }
+  .song .idx { width: 20px; text-align: center; font-size: 11px; color: #8b8b94; }
+  .song .cv { width: 42px; height: 42px; border-radius: 7px; background: linear-gradient(135deg,#2e2e38,#1d1d26); flex: 0 0 auto; }
+  .song .mid { flex: 1; min-width: 0; }
+  .song .tt { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song .al { font-size: 10.5px; color: #8b8b94; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song .du { font-size: 10.5px; color: #8b8b94; }
+  .tag { display: inline-block; font-size: 8.5px; border: 1px solid #5a4a3a; color: #d9a86a; border-radius: 3px; padding: 0 3px; margin-right: 4px; vertical-align: 1px; }
+  /* 专辑/MV 网格 */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; padding: 12px 16px; }
+  .alb .cv { position: relative; width: 100%; aspect-ratio: 1; border-radius: 10px; background: linear-gradient(135deg,#2e2e38,#1d1d26); }
+  .alb .n { font-size: 12px; margin-top: 7px; line-height: 1.35; }
+  .alb .m { font-size: 10.5px; color: #8b8b94; margin-top: 2px; }
+  .mv .cv { position: relative; width: 100%; aspect-ratio: 16/10; border-radius: 10px; background: linear-gradient(135deg,#2e2e38,#1d1d26); }
+  .mv .cnt { position: absolute; top: 6px; right: 8px; font-size: 9.5px; color: #fff; }
+  .mv .dur { position: absolute; right: 8px; bottom: 6px; font-size: 9.5px; color: #fff; }
+  .mv .n { font-size: 11.5px; margin-top: 7px; line-height: 1.35; }
+  /* 详情 */
+  .bio { padding: 4px 16px 12px; }
+  .bio h3 { font-size: 13.5px; font-weight: 600; margin: 12px 0 6px; }
+  .bio p { font-size: 12px; color: #b9b9c2; line-height: 1.75; margin-bottom: 8px; text-align: justify; }
+  /* 相似歌手 */
+  .ag { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px 10px; padding: 14px 20px; }
+  .artist { text-align: center; }
+  .artist .av { width: 100%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #3a3a46, #22222b); }
+  .artist .n { font-size: 12px; margin-top: 7px; }
+  .artist .c { font-size: 10px; color: #8b8b94; margin-top: 2px; }
+</style>
+</head>
+<body data-page-node-id="gH7pZxlfGpykvD4SSWMlLq">
+<div class="phone" data-page-node-id="igvyDZwHny4kdIfVFXwXwB">
+  <div class="topbar" data-page-node-id="pCseed1oFPmcPpt46QsEnH"><div class="back" data-page-node-id="0Mh5tTJklWizm2sjAkvvW6">‹</div><div class="t" data-page-node-id="kCR7vkkXnDtMa0kgQfh6JC">歌手</div></div>
+  <div class="hero" data-page-node-id="AwHFhg9IxnpRXgRbMaop1C">
+    <div class="av" data-page-node-id="4UbT6h3PVC8qSlUO9ajtlU"></div>
+    <div class="info" data-page-node-id="uulHSTIJqUKiXpfhNjb9Wb">
+      <div class="n" data-page-node-id="djXezE5SK5NGPLN9DDDKSR">林俊杰</div>
+      <div class="alias" data-page-node-id="LTfiTk3TzmZkDDyKu1Hu78">JJ Lin / Wayne Lim</div>
+      <div class="stat" data-page-node-id="EHE9CXU93W3Dir8hOp1uzd">单曲 598 · 专辑 84 · MV 203</div>
+    </div>
+  </div>
+  <div style="padding: 0 16px 4px;" data-page-node-id="kDNYWoRkt16V0ibHA1HKYC"><div class="btn" data-page-node-id="oyWhcDrr7KBLUa89CSFfzK">▶ 播放全部</div></div>
+
+  <div class="tabs" data-page-node-id="tMVoceywn7DhW0rCZD8tgF">
+    <div class="tab on" data-p="p1" data-page-node-id="tVXuHU9PVOjoVmt9wceTBi">歌曲</div>
+    <div class="tab" data-p="p2" data-page-node-id="Oanu5AE4uwJ4KHivND7ikX">专辑<sup data-page-node-id="N9JFrfDOjtAZRudUmgYyvn"> 84</sup></div>
+    <div class="tab" data-p="p3" data-page-node-id="w5c39zjkcHHPGmb7lvIqQZ">MV<sup data-page-node-id="taqxd5QEOZwEf3ckQ1pVa7"> 203</sup></div>
+    <div class="tab" data-p="p4" data-page-node-id="DE0EUkTkHtE3A61qxd6goM">歌手详情</div>
+    <div class="tab" data-p="p5" data-page-node-id="J5GEWfsmRi1hGwe5lJShbi">相似歌手</div>
+  </div>
+
+  <!-- 歌曲 -->
+  <div class="page on" id="p1" data-page-node-id="iwhQmvZOp3g7b8pQNAePB1">
+    <div class="sec" data-page-node-id="mObQsebPE2OQXp3BrCTO36">热门歌曲</div>
+    <div class="song" data-page-node-id="j0kFg9KsWgcEhubUQNCxyA"><div class="idx" data-page-node-id="jLKCyixA8l8ywdSMW1UGD6">01</div><div class="cv" data-page-node-id="dwaGVZtxTpxkIq5YCCARB2"></div><div class="mid" data-page-node-id="dYJdrMQ74XqLSVJi72UCDG"><div class="tt" data-page-node-id="H5WtD3ObgfD5h7kLgf9xI2"><span class="tag" data-page-node-id="ZUbhO1F7GYHHZUb0Zr2RPU">MV</span><span class="tag" data-page-node-id="U4AfCQLv50AxqitiZMIYQS">VIP</span>Always Online（《Cries In A Distance》国语版）</div><div class="al" data-page-node-id="QiPvdaO8iaESXgh6PxHr2m">JJ陆</div></div><div class="du" data-page-node-id="iou1VaIFElcQAKuEyoipTT">03:45</div></div>
+    <div class="song" data-page-node-id="bsDo6fpEjSEo1GpeNIqnKC"><div class="idx" data-page-node-id="SScKmOyXRX5TPs2SrGG2hB">02</div><div class="cv" data-page-node-id="6cxZp9qdWOpLBhKKafCYUt"></div><div class="mid" data-page-node-id="zGK8d4ZgdNrbwMHa8CJC9v"><div class="tt" data-page-node-id="ASt7uZADTr5ViJrLZWu619"><span class="tag" data-page-node-id="GJZfk32Fh9A795kPIMkuTD">MV</span><span class="tag" data-page-node-id="q5oPaMA59NvrdEoxc4vfTg">VIP</span>冻结（Freeze）</div><div class="al" data-page-node-id="l2GOe7UshgSUIzXtOgGlIe">乐行者</div></div><div class="du" data-page-node-id="JncmXeiz8Wy8UUJxKXVlzk">04:49</div></div>
+    <div class="song" data-page-node-id="4LE24aiUKncAX3lUBMBtAI"><div class="idx" data-page-node-id="8hMuHtiUpDC8xFXGnpZvBV">03</div><div class="cv" data-page-node-id="1udABCIdXo5ES7dnSH2FI8"></div><div class="mid" data-page-node-id="nowMXqcXAHjSdEcCnZkPkM"><div class="tt" data-page-node-id="IEMHk5R1wi7dYkC7fiaozh"><span class="tag" data-page-node-id="DPCWTF7MqA8RfOJBwJCobv">MV</span><span class="tag" data-page-node-id="WYd8ZTm4N7cDcoNK4PGUrG">VIP</span>美人鱼（Mermaid）</div><div class="al" data-page-node-id="zpn6chlrD9srPslEqOpufQ">第二天堂</div></div><div class="du" data-page-node-id="fOUHuOAaS7wI8MT9ejggDp">04:14</div></div>
+    <div class="song" data-page-node-id="nGcIBi6SCMZg1hnomT2LXy"><div class="idx" data-page-node-id="IpDZQRDAutGkONB7i2PVNT">04</div><div class="cv" data-page-node-id="FsWbHIzwGhc2ekev6kb7FC"></div><div class="mid" data-page-node-id="wpFH97kuWmTDFj36IPZFVB"><div class="tt" data-page-node-id="IyEsSMHaBCSqGDewrrzrAn">愿与愁</div><div class="al" data-page-node-id="W36m8rezqSo3ty0TwLzk1q">愿与愁</div></div><div class="du" data-page-node-id="NWMk8nK1czhKi4BB5xf0kM">03:51</div></div>
+    <div class="song" data-page-node-id="yTZLoy2HGUMOtJUPcXeFCp"><div class="idx" data-page-node-id="p0AjN2Nt8mY8yXAjGzQUgB">05</div><div class="cv" data-page-node-id="N6MjLwLfuxhcO3tkLzi5N3"></div><div class="mid" data-page-node-id="zQRL0ThKTBtUtCPur9LPMU"><div class="tt" data-page-node-id="PI5d11HjHOQacIMRtgaONE"><span class="tag" data-page-node-id="EU3by4cPIkbaGhkTKbN9E8">MV</span><span class="tag" data-page-node-id="FpN6EqAN5Aa95nrCnNGtWN">VIP</span>江南（River South）</div><div class="al" data-page-node-id="R4JoGhI7QaRfeP8DzZHKcM">第二天堂</div></div><div class="du" data-page-node-id="IGGQZxk0JdkVBdw596P9TT">04:27</div></div>
+    <div class="song" data-page-node-id="l8O5yygy7FJRuFWhwnbaNc"><div class="idx" data-page-node-id="bpD4xDPT7TXmdVLabh54zQ">06</div><div class="cv" data-page-node-id="WGe7OBOBpjwSPYvcG85EZg"></div><div class="mid" data-page-node-id="peF0PXqsiu87vHoF1q3ReF"><div class="tt" data-page-node-id="zHptE2ehLoAR6fj3m7koBE"><span class="tag" data-page-node-id="F6zsDrOPdE1pPRdmGtgrLu">MV</span><span class="tag" data-page-node-id="bPsmkyqAhZyia86YpKvoKE">VIP</span>那些你很冒险的梦（Those Were The Days）</div><div class="al" data-page-node-id="QQJL9IrYVF5kxiTmfvOrxI">学不会（Lost N Found）</div></div><div class="du" data-page-node-id="lR0Krz47NQVFTYJlpWZFVe">04:04</div></div>
+  </div>
+
+  <!-- 专辑 -->
+  <div class="page" id="p2" data-page-node-id="in675BpIz2IvwG6of3TqoJ">
+    <div class="grid2" data-page-node-id="PXY9ixCwDGEq5zgKNju7kt">
+      <div class="alb" data-page-node-id="0KkQyuCrqqvDeeAU3RzoAD"><div class="cv" data-page-node-id="wYpSplzFCuHdHMZAeDLOEu"></div><div class="n" data-page-node-id="JOabLk2o2uYdo5da4QKRrL">我对缘分小心翼翼</div><div class="m" data-page-node-id="FjdWBHkpH0xjcSWiKaWb6U">1首 · 2026-02-27</div></div>
+      <div class="alb" data-page-node-id="BF8z07nQ7txziVKu08L22p"><div class="cv" data-page-node-id="sDXI5EHFKaReVxHLf2oS3s"></div><div class="n" data-page-node-id="lXu5g5pKBnkJiCtocTCzrp">为你塌踏</div><div class="m" data-page-node-id="E9wNUSiTQZI8VirimvVkvR">1首 · 2025-10-03</div></div>
+      <div class="alb" data-page-node-id="T52pChsjUPCGmcZF9gh39A"><div class="cv" data-page-node-id="9XVlPazcWFDmLOeS1CQSqf"></div><div class="n" data-page-node-id="ysbH3RGO423tIL50xtWey3">瞬间的瞬间</div><div class="m" data-page-node-id="xvHCRARYzMICR90M2GLlyr">1首 · 2025-09-15</div></div>
+      <div class="alb" data-page-node-id="jToHcERKCbY5dbnQYhbDli"><div class="cv" data-page-node-id="l6x82uSeD6xeoTPx4ioVuU"></div><div class="n" data-page-node-id="IFFHhzQPzCIiypz78HHESy">在月色里拥抱我</div><div class="m" data-page-node-id="n19P4j0jIXE5wPaVfYAPzU">1首 · 2025-07-06</div></div>
+      <div class="alb" data-page-node-id="HLei5zAEzF2i6TInS41lTp"><div class="cv" data-page-node-id="uMUu7jeYN1lOYqDvAXHajE"></div><div class="n" data-page-node-id="oUptC87FAYCNNoMmIuLOmG">光阴副本 / Turn A Page</div><div class="m" data-page-node-id="hlVdybfBVSRhUoGEXU0my2">2首 · 2024-12-24</div></div>
+      <div class="alb" data-page-node-id="1vSEovAPRHMIAmGISbUR66"><div class="cv" data-page-node-id="GDHnskWPwFq6rw4lrZi6PC"></div><div class="n" data-page-node-id="Ey0Y8pe6jiIVzcZBBiHT0v">重拾_快乐</div><div class="m" data-page-node-id="0COfiSAeceC5KLnt2BOr03">12首 · 2023-05-19</div></div>
+    </div>
+  </div>
+
+  <!-- MV -->
+  <div class="page" id="p3" data-page-node-id="3hQuFgZF4gEib0PNeJivs6">
+    <div class="grid2" data-page-node-id="YVyk4E6N5jrlJ5naeRvHrH">
+      <div class="mv" data-page-node-id="LLnBgR35qupY3fADrL9vRf"><div class="cv" data-page-node-id="w6Ol0oKAoLxNSJhDFZNCSN"><div class="cnt" data-page-node-id="Ho9yGl9WocHJcATZBgPHvu">▶ 60.3万</div><div class="dur" data-page-node-id="8Pd9kOVgjUbSnkFofrrR4l">04:32</div></div><div class="n" data-page-node-id="dguX2AyMcnLCkWc2FjHf5F">我对缘分小心翼翼（影视剧《逐玉》主题曲）</div></div>
+      <div class="mv" data-page-node-id="IwjMZ7IY1yFILO8xAm9yXT"><div class="cv" data-page-node-id="q47N6VR0oT3QXYVWBSj3V7"><div class="cnt" data-page-node-id="v6l2kKA45qKaH5orlojpuv">▶ 85061</div><div class="dur" data-page-node-id="RNSbknfThNBlCdghtNfAMn">05:24</div></div><div class="n" data-page-node-id="6nqy05in8yZTTF7lyx2lQ5">Skibidi</div></div>
+      <div class="mv" data-page-node-id="dMRHykmZePSaOg9ul81wV8"><div class="cv" data-page-node-id="ADS8QjCiG7txrEg7DagvtL"><div class="cnt" data-page-node-id="zrliY8WlDuVbb4Mofa9g0E">▶ 10万</div><div class="dur" data-page-node-id="0qbSVbELBPxgZrznEWOyCJ">04:22</div></div><div class="n" data-page-node-id="StyulGA0ddkbqLoV9K2X13">在月色里拥抱我</div></div>
+      <div class="mv" data-page-node-id="Y6HRJNXTWgnEsUDWvTocpY"><div class="cv" data-page-node-id="axDcX2YJSDD3NB4sBT6529"><div class="cnt" data-page-node-id="xy58toL6yScklfsU7HNY7t">▶ 80011</div><div class="dur" data-page-node-id="OK2wYOWNG2IUYsFdLxMXyO">00:14</div></div><div class="n" data-page-node-id="MywyIAyNciwfOxUDUZkSN8">来自林俊杰的2025新年祝福已送达</div></div>
+    </div>
+  </div>
+
+  <!-- 歌手详情 -->
+  <div class="page" id="p4" data-page-node-id="pERxf4d1CjBfK1aphCUlwC">
+    <div class="bio" data-page-node-id="Qrd7sT72QP1HmjWrbtVsUH">
+      <h3 data-page-node-id="VQLz38a3lPYLycwSXXLtOV">林俊杰简介</h3>
+      <p data-page-node-id="QpT54w4vTzFdiwVqurOlFP">JJ林俊杰的创作来自最深的悟性，他的声音唱出灵感的璀璨，他把音乐和梦想当做能量，一路走到无人取代的地位，他写下华语乐坛最动人的经典乐章，他是亚洲乐坛喜剧天王JJ林俊杰。</p>
+      <h3 data-page-node-id="RphyBySXYC5jNqfTdt8bLs">演艺经历</h3>
+      <p data-page-node-id="Eitc1gZnWdrftsB1c5B956">2003年，发行首张全创作专辑《乐行者》。虽然时逢SARS，但他和团队不轻言放弃，在3个月内走遍26个城市，进行了上百场演出。</p>
+      <p data-page-node-id="VOWYerQK4SKdA0QrjiJe8D">2004年，游走大陆，让从小接受英语教育的林俊杰首次体验中华文化所带来的冲击，结合西方R&B现代曲风以及中国的风第二张创作专辑《江南》（原名《第二天堂》）由此诞生。</p>
+      <h3 data-page-node-id="ZHnSxv3Ui4LPZg4dtYoClm">代表作品</h3>
+      <p data-page-node-id="X8vzSF5wL3OuwGZxyxxaDr">●2003年首发第一张个人创作专辑《乐行者》，取得不俗成绩。</p>
+    </div>
+  </div>
+
+  <!-- 相似歌手 -->
+  <div class="page" id="p5" data-page-node-id="VrTE42MjImqwyTksbSF7nA">
+    <div class="ag" data-page-node-id="E8C5qG9e63Bs1tnCkFAqK1">
+      <div class="artist" data-page-node-id="QYVQDQ7hjKwx5oo6l70b78"><div class="av" data-page-node-id="YIuJWB9h8pGax8KFbXhcWs"></div><div class="n" data-page-node-id="dHEyo4TQpztJX41bCfeFzN">陈奕迅</div><div class="c" data-page-node-id="UvsgvFuiBANy2ESeRo90rn">单曲: 1862</div></div>
+      <div class="artist" data-page-node-id="OlGakcYHRk65wzzatXGH8m"><div class="av" data-page-node-id="I7Or6zCaxarBJ9xQfGMrTJ"></div><div class="n" data-page-node-id="R7SIG87xlcaz2Otz3cJiG9">薛之谦</div><div class="c" data-page-node-id="pNwFNfsUtO7bEfUZ7ULI4n">单曲: 310</div></div>
+      <div class="artist" data-page-node-id="UcgYP8OpHRfYlaHhwK5a1W"><div class="av" data-page-node-id="lK7ApdZ2M3v3K6DtJpr6EC"></div><div class="n" data-page-node-id="gxq7RQ9UB9ITrgHc9lC7fr">G.E.M.邓紫棋</div><div class="c" data-page-node-id="BgPT3Yfa01E7viwaQbFsfT">单曲: 419</div></div>
+      <div class="artist" data-page-node-id="fh2WHAw7nPrPurnOstNV7m"><div class="av" data-page-node-id="pKkCyPMAWjDJoiutooK7VO"></div><div class="n" data-page-node-id="nnD6QTYvuXkL7Nv6cefJzF">李荣浩</div><div class="c" data-page-node-id="COHywPyVgvQeD3f2br0IyZ">单曲: 246</div></div>
+      <div class="artist" data-page-node-id="ymSSFKNGiqQtotCEJmwehm"><div class="av" data-page-node-id="xPMEroMSS5wIDOGhASC03G"></div><div class="n" data-page-node-id="nkIg1HzIux2q7M7MTC0FRh">汪苏泷</div><div class="c" data-page-node-id="Kd17l3y3bierMlbq1Kyurf">单曲: 724</div></div>
+      <div class="artist" data-page-node-id="copxFG5X2EkjMkHv0qYGbQ"><div class="av" data-page-node-id="FscYawg0sJA97sJOtMYlEJ"></div><div class="n" data-page-node-id="f15ateBbU7pCZ7sRcoPLbC">蔡健雅</div><div class="c" data-page-node-id="MN64xirYQ7129ubdmqDqNE">单曲: 585</div></div>
+    </div>
+  </div>
+</div>
+<script>
+  document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("on"));
+    document.querySelectorAll(".page").forEach(x => x.classList.remove("on"));
+    t.classList.add("on");
+    document.getElementById(t.dataset.p).classList.add("on");
+  });
+</script>
+</body>
+</html>

@@ -1073,6 +1073,130 @@ public static class NeteaseUiKit
         return card;
     }
 
+    /// <summary>歌手圆头像卡（回调版）：独立页用 Action 回调（页面不在 BindingContext 命令链里）。</summary>
+    public static View CreateArtistAvatarCard(double width, Action<NeteaseArtist> onTap)
+    {
+        var card = (VerticalStackLayout)CreateArtistAvatarCard(width, (ICommand?)null);
+        var tap = new TapGestureRecognizer();
+        tap.Tapped += (_, _) => { if (card.BindingContext is NeteaseArtist a) onTap(a); };
+        card.GestureRecognizers.Add(tap);
+        return card;
+    }
+
+    /// <summary>时长格式化：毫秒 → mm:ss（超 1 小时 h:mm:ss）。</summary>
+    public static string FormatDuration(int ms)
+    {
+        var t = TimeSpan.FromMilliseconds(ms);
+        return t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes:00}:{t.Seconds:00}";
+    }
+
+    /// <summary>专辑网格卡（歌手页专辑 tab，仿官方：封面 + 专辑名 + 「n首 · 日期」）。</summary>
+    public static View CreateAlbumGridCard(double width, Action<NeteaseAlbum>? onTap = null)
+    {
+        var coverBorder = new Border
+        {
+            WidthRequest = width,
+            HeightRequest = width,
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 10 },
+        };
+        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var coverImage = new Image { Aspect = Aspect.AspectFill };
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseAlbum.PicUrl),
+            converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 300)
+        { TargetNullValue = "ic_music_note" });
+        coverBorder.Content = coverImage;
+
+        var nameLabel = new Label
+        {
+            FontSize = 11.5f,
+            LineHeight = 15,
+            MaxLines = 2,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            Margin = new Thickness(0, 7, 0, 0),
+        };
+        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        nameLabel.SetBinding(Label.TextProperty, nameof(NeteaseAlbum.Name));
+
+        var metaLabel = new Label { FontSize = 10, Margin = new Thickness(0, 2, 0, 0) };
+        metaLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
+        metaLabel.SetBinding(Label.TextProperty, new Binding(nameof(NeteaseAlbum.SongCount), stringFormat: "{0}首 · "));
+        // SongCount 与 PublishYear 两个小字标签横排，视觉拼成「n首 · 2026-02-27」（官方样式）
+        var yearLabel = new Label { FontSize = 10, Margin = new Thickness(0, 2, 0, 0) };
+        yearLabel.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
+        yearLabel.SetBinding(Label.TextProperty, nameof(NeteaseAlbum.PublishYear));
+
+        var meta = new HorizontalStackLayout { Spacing = 0, Children = { metaLabel, yearLabel } };
+
+        var card = new VerticalStackLayout { Children = { coverBorder, nameLabel, meta } };
+        if (onTap != null)
+        {
+            var tap = new TapGestureRecognizer();
+            tap.Tapped += (_, _) => { if (card.BindingContext is NeteaseAlbum alb) onTap(alb); };
+            card.GestureRecognizers.Add(tap);
+        }
+        return card;
+    }
+
+    /// <summary>MV 网格卡（歌手页 MV tab，仿官方：16:10 封面 + 右上播放量 + 右下时长 + 标题）。</summary>
+    public static View CreateArtistMvCard(double width, Action<NeteaseMv>? onTap = null)
+    {
+        var coverHeight = (int)(width * 10 / 16.0);
+        var coverBorder = new Border
+        {
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 10 },
+            HeightRequest = coverHeight,
+        };
+        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var coverImage = new Image { Aspect = Aspect.AspectFill };
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(NeteaseMv.CoverUrl),
+            converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 400)
+        { TargetNullValue = "ic_music_note" });
+        coverBorder.Content = coverImage;
+
+        var cntLabel = new Label { FontSize = 9.5f, TextColor = Colors.White, HorizontalOptions = LayoutOptions.End, VerticalOptions = LayoutOptions.Start, Margin = new Thickness(0, 6, 8, 0) };
+        cntLabel.SetBinding(Label.TextProperty, new Binding(nameof(NeteaseMv.PlayCount),
+            converter: PlayCountTextConverter.Instance, stringFormat: "▶ {0}"));
+        var durLabel = new Label { FontSize = 9.5f, TextColor = Colors.White, HorizontalOptions = LayoutOptions.End, VerticalOptions = LayoutOptions.End, Margin = new Thickness(0, 0, 8, 6) };
+        durLabel.SetBinding(Label.TextProperty, new Binding(nameof(NeteaseMv.DurationMs),
+            converter: MvDurationConverter.Instance));
+
+        var coverGrid = new Grid { Children = { coverBorder, cntLabel, durLabel } };
+
+        var nameLabel = new Label
+        {
+            FontSize = 11.5f,
+            LineHeight = 15,
+            MaxLines = 2,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            Margin = new Thickness(0, 7, 0, 0),
+        };
+        nameLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+        nameLabel.SetBinding(Label.TextProperty, nameof(NeteaseMv.Name));
+
+        var card = new VerticalStackLayout { Children = { coverGrid, nameLabel } };
+        if (onTap != null)
+        {
+            var tap = new TapGestureRecognizer();
+            tap.Tapped += (_, _) => { if (card.BindingContext is NeteaseMv mv) onTap(mv); };
+            card.GestureRecognizers.Add(tap);
+        }
+        return card;
+    }
+
+    /// <summary>MV 时长转换：毫秒 → mm:ss。</summary>
+    internal sealed class MvDurationConverter : IValueConverter
+    {
+        public static readonly MvDurationConverter Instance = new();
+
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => value is int ms && ms > 0 ? FormatDuration(ms) : "";
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
     /// <summary>
     /// 在线 URL → 内存 Stream 封面（不落盘缓存）。在线歌曲封面下载到内存字节，
     /// 再用内存字典缓存避免重复下载；进程退出后自动释放，不会在本地堆积缓存文件或产生显示错误。
