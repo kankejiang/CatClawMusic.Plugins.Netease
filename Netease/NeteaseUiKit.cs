@@ -736,11 +736,34 @@ public static class NeteaseUiKit
         {
             var url = value as string;
             if (string.IsNullOrWhiteSpace(url)) return "ic_music_note";
+            var sized = ApplyMaxSize(url, parameter);
+            if (!ReferenceEquals(sized, url)) url = sized;
             return ImageSource.FromStream(ct => LoadAsync(url, ct));
         }
 
         public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
             => throw new NotSupportedException();
+
+        /// <summary>
+        /// 按显示尺寸裁剪网易云封面（?param=WxH）。parameter 为 int 最大边长（如 150）；
+        /// 已带 ?param= 的 URL 直接替换尺寸，带其它查询参数的用 &amp; 追加。
+        /// 非网易云 CDN 的 URL 原样返回。缓存 key 用裁剪后的 URL，互不干扰。
+        /// </summary>
+        private static string ApplyMaxSize(string url, object? parameter)
+        {
+            var size = parameter switch
+            {
+                int i => i,
+                string s when int.TryParse(s, out var n) => n,
+                _ => 0,
+            };
+            if (size <= 0) return url;
+            if (!url.Contains("music.126.net", StringComparison.OrdinalIgnoreCase)) return url;
+            var param = $"param={size}y{size}";
+            var idx = url.IndexOf("?param=", StringComparison.Ordinal);
+            if (idx >= 0) return url.Substring(0, idx + 7) + param;
+            return url + (url.Contains('?') ? "&" : "?") + param;
+        }
 
         private static async Task<Stream> LoadAsync(string url, CancellationToken ct)
         {

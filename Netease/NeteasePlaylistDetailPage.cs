@@ -308,19 +308,29 @@ public class NeteasePlaylistDetailPage : ContentPage
 
     private View BuildSongsList()
     {
-        // 用 BindableLayout（非虚拟化）：宿主 MAUI 版本的 CollectionView 在推入页内曾出现
-        // ItemsSource 有数据但不实例化行的问题；歌单规模（≤数百行）可接受全量布局。
-        var list = new VerticalStackLayout { Spacing = 0 };
-        BindableLayout.SetItemsSource(list, _vm.Songs);
-        BindableLayout.SetItemTemplate(list, new DataTemplate(() =>
+        // CollectionView 虚拟化：歌曲多时只实例化可见行，推页与滚动不再全量建树。
+        // 旧实现是 ScrollView + StackLayout + BindableLayout（非虚拟化），数百首歌单会
+        // 一次性构建全部行（载入慢）且行常驻渲染树（滚动卡）。
+        // 早期记录的「CollectionView ItemsSource 有数据但不实例化行」是因为当年把它
+        // 嵌进了 ScrollView（高度测量异常）；本页列表直接占 Grid Star 行、自带滚动，无嵌套。
+        var list = new CollectionView
+        {
+            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical) { ItemSpacing = 0 },
+            ItemSizingStrategy = ItemSizingStrategy.MeasureFirstItem, // 行高一致，只测首行
+            // Android：不透明深色背景保证下半屏观感与官方一致（CollectionView 自身会裁剪内容，不再有 ScrollView 上滑溢出问题）
+            BackgroundColor = Color.FromArgb("#141418"),
+        };
+        list.SetBinding(ItemsView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
+        list.ItemTemplate = new DataTemplate(() =>
         {
             var cover = new Image
             {
                 WidthRequest = 44, HeightRequest = 44, Aspect = Aspect.AspectFill,
                 VerticalOptions = LayoutOptions.Center,
             };
+            // 44dp 行内封面：converter 按 150 最大边裁剪（3x 屏 ≈132px），避免解码 1000² 原图
             cover.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl),
-                converter: NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance)
+                converter: NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance, converterParameter: 150)
             { TargetNullValue = "ic_music_note" });
             var coverBorder = new Border
             {
@@ -361,14 +371,8 @@ public class NeteasePlaylistDetailPage : ContentPage
                 }) },
                 Children = { Cell(coverBorder), Cell(new VerticalStackLayout { Spacing = 0, VerticalOptions = LayoutOptions.Center, Children = { title, artist } }, col: 1), Cell(more, col: 2) },
             };
-        }));
-        // Android：ScrollView 无背景时不裁剪滚动内容，列表会上滑溢出盖住头部；
-        // 给不透明深色背景即可触发裁剪（观感与官方下半屏深色一致）
-        return new ScrollView
-        {
-            Content = list,
-            BackgroundColor = Color.FromArgb("#141418"),
-        };
+        });
+        return list;
     }
 
     // ══════════════════ 行为 ══════════════════
@@ -394,7 +398,7 @@ public class NeteasePlaylistDetailPage : ContentPage
             try
             {
                 _creatorAvatar.Source = NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance.Convert(
-                    _dynamic.CreatorAvatar, typeof(ImageSource), null,
+                    _dynamic.CreatorAvatar, typeof(ImageSource), 100,
                     System.Globalization.CultureInfo.CurrentCulture) as ImageSource;
                 _creatorAvatar.IsVisible = _creatorAvatar.Source != null;
             }
