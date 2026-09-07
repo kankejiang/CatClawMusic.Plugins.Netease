@@ -487,16 +487,25 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
-    /// <summary>歌手 MV 列表（weapi /api/artist/mv，匿名可用；more 字段指示可翻页）</summary>
-    public async Task<List<NeteaseMv>> GetArtistMvsAsync(string artistId, int limit = 40, int offset = 0)
+    /// <summary>
+    /// 歌手 MV 列表（cloudsearch type=1004 按歌手名搜 MV；weapi /api/artist/mv 实测 400 不可用）。
+    /// 字段：id/name/duration(ms)/playCount/cover/artists[]。
+    /// </summary>
+    public async Task<List<NeteaseMv>> GetArtistMvsAsync(string artistName, int limit = 40, int offset = 0)
     {
         try
         {
-            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/artist/mv",
-                new Dictionary<string, object> { ["artistId"] = artistId, ["limit"] = limit, ["offset"] = offset }, _cookie);
-            if (string.IsNullOrWhiteSpace(raw)) return new List<NeteaseMv>();
-            using var doc = JsonDocument.Parse(raw);
-            if (!doc.RootElement.TryGetProperty("mvs", out var mvs) || mvs.ValueKind != JsonValueKind.Array)
+            var body = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["s"] = artistName, ["type"] = "1004", ["offset"] = offset.ToString(), ["limit"] = limit.ToString()
+            });
+            var req = Build(HttpMethod.Post, "https://music.163.com/api/cloudsearch/pc");
+            req.Content = body;
+            using var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("mvs", out var mvs) || mvs.ValueKind != JsonValueKind.Array)
                 return new List<NeteaseMv>();
             var list = new List<NeteaseMv>();
             foreach (var m in mvs.EnumerateArray())
@@ -506,7 +515,7 @@ public class NeteaseOpenApiClient
                 {
                     Id = idEl.GetInt64().ToString(),
                     Name = m.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    CoverUrl = CoverWithSize(ToHttps(m.TryGetProperty("imgurl", out var img) ? img.GetString() : null), 400),
+                    CoverUrl = CoverWithSize(ToHttps(m.TryGetProperty("cover", out var img) ? img.GetString() : null), 400),
                     PlayCount = m.TryGetProperty("playCount", out var pc) && pc.TryGetInt64(out var pcv) ? pcv : 0,
                     DurationMs = m.TryGetProperty("duration", out var du) && du.TryGetInt32(out var duv) ? duv : 0,
                 });
@@ -516,16 +525,16 @@ public class NeteaseOpenApiClient
         catch { return new List<NeteaseMv>(); }
     }
 
-    /// <summary>相似歌手（weapi /api/v1/discovery/simiArtist，匿名可用）</summary>
+    /// <summary>
+    /// 相似歌手（GET /api/discovery/simiArtist?artistid=…，参数名全小写 artistid；需 Cookie 登录态，返回约 20 个）。
+    /// weapi /api/v1/discovery/simiArtist 实测 404 不可用。
+    /// </summary>
     public async Task<List<NeteaseArtist>> GetSimilarArtistsAsync(string artistId, int limit = 30)
     {
         try
         {
-            var raw = await NeteaseWeapi.RequestAsync(_http, "/api/v1/discovery/simiArtist",
-                new Dictionary<string, object> { ["artistId"] = artistId, ["limit"] = limit }, _cookie);
-            if (string.IsNullOrWhiteSpace(raw)) return new List<NeteaseArtist>();
-            using var doc = JsonDocument.Parse(raw);
-            if (!doc.RootElement.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array)
+            using var doc = await GetJsonAsync($"https://music.163.com/api/discovery/simiArtist?artistid={artistId}&limit={limit}");
+            if (doc == null || !doc.RootElement.TryGetProperty("artists", out var artists) || artists.ValueKind != JsonValueKind.Array)
                 return new List<NeteaseArtist>();
             var list = new List<NeteaseArtist>();
             foreach (var a in artists.EnumerateArray())

@@ -377,7 +377,7 @@ public class NeteaseArtistPage : ContentPage
         _loading.IsRunning = true;
         try
         {
-            foreach (var m in await _plugin.ApiClient.GetArtistMvsAsync(_artist.Id, 40, 0)) _mvs.Add(m);
+            foreach (var m in await _plugin.ApiClient.GetArtistMvsAsync(_artist.Name, 40, 0)) _mvs.Add(m);
             Rechunk(_mvRows);
         }
         catch { }
