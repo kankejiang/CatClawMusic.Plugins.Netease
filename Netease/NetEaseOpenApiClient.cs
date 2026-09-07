@@ -761,6 +761,56 @@ public class NeteaseOpenApiClient
         catch { return null; }
     }
 
+    /// <summary>
+    /// 榜单/歌单第一页快速预览（服务于「榜单 Top N」这类只要前几首的场景）：
+    /// eapi v6 detail n=count 只取头部完整曲目（tracks 与列表顺序一致），单请求毫秒级返回；
+    /// 不走 trackIds 补全（那是全量歌单的分页链路）。eapi 失败回退网页版同参数。
+    /// </summary>
+    public async Task<List<OnlineSong>> GetPlaylistSongsFirstPageAsync(string playlistId, int count)
+    {
+        var result = new List<OnlineSong>();
+        try
+        {
+            if (!long.TryParse(playlistId, out var id)) return result;
+            var raw = await NeteaseEapi.RequestAsync(_http, "/eapi/v6/playlist/detail", new Dictionary<string, object>
+            {
+                ["id"] = id, ["n"] = count, ["s"] = 8,
+            }, _cookie, rawCipherResponse: true);
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                using var doc = JsonDocument.Parse(raw);
+                if (doc.RootElement.TryGetProperty("playlist", out var pl) &&
+                    pl.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var s in tracks.EnumerateArray())
+                    {
+                        var song = ParseSong(s);
+                        if (song != null) result.Add(song);
+                        if (result.Count >= count) return result;
+                    }
+                }
+            }
+        }
+        catch { }
+        try
+        {
+            var url = $"https://music.163.com/api/v6/playlist/detail?id={playlistId}&n={count}&s=8";
+            using var doc = await GetJsonAsync(url);
+            if (doc != null && doc.RootElement.TryGetProperty("playlist", out var pl) &&
+                pl.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var s in tracks.EnumerateArray())
+                {
+                    var song = ParseSong(s);
+                    if (song != null) result.Add(song);
+                    if (result.Count >= count) break;
+                }
+            }
+        }
+        catch { }
+        return result;
+    }
+
     /// <summary>网页版 v6 歌单详情取曲目（浏览器身份，n=1000 上限；eapi 失败时的兜底）</summary>
     private async Task<List<OnlineSong>?> GetPlaylistSongsViaWebAsync(OnlinePlaylist playlist, int page, int pageSize)
     {

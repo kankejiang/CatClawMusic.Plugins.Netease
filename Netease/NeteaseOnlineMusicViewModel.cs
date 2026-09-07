@@ -389,17 +389,30 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                 ToplistBlocks.Add(b);
                 ToplistColors.Add(b.Playlist);
             }
-            // 匿名 toplist/detail 不带预览曲目：前 6 个官方榜并行补拉 Top3
-            var need = ToplistBlocks.Where(b => b.TopSongs.Count == 0).Take(6).ToList();
-            var results = await Task.WhenAll(need.Select(async b =>
-                (Block: b, Songs: await _plugin.GetPlaylistSongsAsync(b.Playlist, 1, 3))));
-            foreach (var (block, songs) in results)
-                if (songs != null)
-                    foreach (var s in songs.Take(3))
-                        block.TopSongs.Add(s);
         }
         catch { }
-        finally { IsLoading = false; }
+        finally
+        {
+            // 不等 Top3：loading 先撤，色块与榜单名立即可见
+            IsLoading = false;
+        }
+        // Top3 渐进补拉：轻量单榜请求（头部 N 首），完成一个填一个，不阻塞 UI
+        _ = FillTop3Async();
+    }
+
+    /// <summary>逐榜补拉 Top3 预览；await 回 UI 线程后 Add 即时刷新对应卡片行</summary>
+    private async Task FillTop3Async()
+    {
+        var need = ToplistBlocks.Where(b => b.TopSongs.Count == 0).Take(6).ToList();
+        foreach (var b in need)
+        {
+            try
+            {
+                var songs = await _plugin.ApiClient.GetPlaylistSongsFirstPageAsync(b.Playlist.Id, 3);
+                foreach (var s in songs.Take(3)) b.TopSongs.Add(s);
+            }
+            catch { }
+        }
     }
 
     /// <summary>榜单色块/Top3 卡点击 → 直接复用歌单详情页打开（榜单可当歌单）</summary>
