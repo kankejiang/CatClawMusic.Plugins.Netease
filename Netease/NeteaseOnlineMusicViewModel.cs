@@ -433,7 +433,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     public ObservableCollection<ArtistGridRow> TabArtistRows { get; } = new();
 
-    public const double ArtistCardWidth = 150;
+    /// <summary>130dp：竖屏手机（~436dp 可用宽）恰好推导出 3 列，宽屏自动加列（上限 6）</summary>
+    public const double ArtistCardWidth = 130;
     private const double ArtistCardSpacing = 10;
     private int _artistGridSpan = 2;
     private int _artistPage;
@@ -452,9 +453,10 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     private void RechunkArtists()
     {
+        // 先收集再清空：Clear 之后再枚举就只剩空行了（跨档重排会丢数据）
+        var all = TabArtistRows.SelectMany(r => r.Items).OfType<NeteaseArtist>().ToList();
         TabArtistRows.Clear();
-        var all = TabArtistRows.SelectMany(r => r.Items).ToList();
-        foreach (var a in all) AppendArtistRow((NeteaseArtist)a);
+        foreach (var a in all) AppendArtistRow(a);
     }
 
     private void AppendArtistRow(NeteaseArtist artist)
