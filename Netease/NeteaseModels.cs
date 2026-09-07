@@ -1,4 +1,5 @@
 using CatClawMusic.Core.Models;
+using System.Collections.ObjectModel;
 
 namespace CatClawMusic.Plugins.Netease;
 
@@ -20,8 +21,8 @@ public class ToplistBlock
     /// <summary>更新频率（如「刚刚更新」「每周四更新」）</summary>
     public string UpdateFrequency { get; set; } = "";
 
-    /// <summary>榜单前三首（并行预取）</summary>
-    public List<OnlineSong> TopSongs { get; } = new();
+    /// <summary>榜单前三首（并行补拉后逐首 Add，需可通知集合以刷新卡片行）</summary>
+    public ObservableCollection<OnlineSong> TopSongs { get; } = new();
 }
 
 /// <summary>歌手信息（cloudsearch type=100 / 歌手搜索）</summary>

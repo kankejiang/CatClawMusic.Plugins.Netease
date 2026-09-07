@@ -479,7 +479,12 @@ public class NeteaseOnlineMusicPage : ContentPage
         {
             colorCardsHost.Children.Clear();
             for (var i = 0; i < _vm.ToplistColors.Count; i++)
-                colorCardsHost.Children.Add(NeteaseUiKit.CreateToplistColorCard(i, _vm.OpenToplistCommand));
+            {
+                // 色块不在 BindableLayout 内（要按索引取渐变色板），需手动给 BindingContext 才能让 Name 绑定生效
+                var card = NeteaseUiKit.CreateToplistColorCard(i, _vm.OpenToplistCommand);
+                card.BindingContext = _vm.ToplistColors[i];
+                colorCardsHost.Children.Add(card);
+            }
         });
         var blocksHost = new VerticalStackLayout { Spacing = 8, Margin = new Thickness(14, 0, 14, 0) };
         BindableLayout.SetItemsSource(blocksHost, _vm.ToplistBlocks);
@@ -534,6 +539,8 @@ public class NeteaseOnlineMusicPage : ContentPage
             },
             Children = { headerGrid, tabsBar, searchRowGrid, _featuredScroll!, _squareHost!, _toplistsScroll!, _artistsTabHost!, _artistsView, _songsView, _loadingIndicator, tipBorder, _suggestOverlay },
         };
+        Grid.SetRow(headerGrid, 0);
+        Grid.SetRow(tabsBar, 1);
         Grid.SetRow(searchRowGrid, 2);
         Grid.SetRow(_featuredScroll!, 3);
         Grid.SetRow(_squareHost!, 3);
