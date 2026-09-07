@@ -1144,6 +1144,7 @@ public static class NeteaseUiKit
         var coverHeight = (int)(width * 10 / 16.0);
         var coverBorder = new Border
         {
+            WidthRequest = width, // 必须显式约束：否则封面按原图宽撑开、行内卡片宽窄不一
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 10 },
             HeightRequest = coverHeight,
