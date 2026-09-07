@@ -470,7 +470,19 @@ public class NeteaseOnlineMusicPage : ContentPage
         _featuredScroll.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowFeatured));
 
         // ── 歌单广场 tab：分类 chips + 分块网格（网格自带虚拟化与分页）──
-        _squareHost = new VerticalStackLayout { Children = { categoriesScroll, _playlistsView } };
+        // 必须 Grid 星号行（不能 VerticalStackLayout）：CollectionView 嵌无界高度容器会失去
+        // 虚拟化与滚动（以为自身全可见，超出屏幕的行被直接裁掉——歌手 tab 8 个不可滚的同款问题）
+        _squareHost = new Grid
+        {
+            RowDefinitions = new RowDefinitionCollection
+            {
+                new() { Height = GridLength.Auto },
+                new() { Height = GridLength.Star },
+            },
+            Children = { categoriesScroll, _playlistsView },
+        };
+        Grid.SetRow(categoriesScroll, 0);
+        Grid.SetRow(_playlistsView, 1);
         _squareHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSquare));
 
         // ── 排行榜 tab：榜单色块横滑 + 官方榜 Top3 卡 ──
@@ -524,7 +536,19 @@ public class NeteaseOnlineMusicPage : ContentPage
                 NeteaseUiKit.CreateArtistAvatarCard(NeteaseOnlineMusicViewModel.ArtistCardWidth, _vm.OpenTabArtistCommand)));
             return row;
         });
-        _artistsTabHost = new VerticalStackLayout { Children = { regionChips, genderChips, _tabArtistsView } };
+        _artistsTabHost = new Grid
+        {
+            RowDefinitions = new RowDefinitionCollection
+            {
+                new() { Height = GridLength.Auto },
+                new() { Height = GridLength.Auto },
+                new() { Height = GridLength.Star }, // 网格必须占星号行拿到有界高度（虚拟化 + 滚动），不能放 StackLayout
+            },
+            Children = { regionChips, genderChips, _tabArtistsView },
+        };
+        Grid.SetRow(regionChips, 0);
+        Grid.SetRow(genderChips, 1);
+        Grid.SetRow(_tabArtistsView, 2);
         _artistsTabHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtistTab));
 
         // ── 组装页面：header / tab 栏 / 搜索行（默认隐藏）/ 内容区 ──
