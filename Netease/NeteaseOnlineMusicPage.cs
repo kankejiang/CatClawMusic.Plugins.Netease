@@ -10,7 +10,7 @@ namespace CatClawMusic.Plugins.Netease;
 /// <summary>
 /// 网易云在线音乐页面（C# 代码构建 UI，避免跨程序集 XAML 编译问题）。
 /// <para>
-/// 顶部：返回 + 标题 + 音质切换 + 账号；搜索框 + 搜索类型（歌曲/歌单/歌手）；
+/// 顶部：返回 + 标题 + 搜索按钮 + 音质切换 + 账号（点击搜索按钮展开/收起搜索输入行）；
 /// 功能入口（私人漫游/每日推荐/排行榜/我的歌单/推荐歌单）；分类 chips；
 /// 歌单网格（分页加载）/歌手列表/歌曲列表三态切换；底部轻提示条。
 /// 通过 DynamicResource 访问宿主应用的全局资源（颜色、样式）。
@@ -32,6 +32,9 @@ public class NeteaseOnlineMusicPage : ContentPage
     // 响应式布局引用的控件（宽屏/窄屏切换需要重排行列归属）
     private readonly Grid searchRowGrid;
     private readonly Border searchBorder;
+    private readonly Entry searchEntry;
+    private readonly Border searchButton;
+    private bool _searchOpen; // 搜索输入行展开状态（顶部搜索按钮控制）
     private readonly ScrollView searchModesScroll;
     private readonly HorizontalStackLayout searchModesLayout;
     private readonly ScrollView entryContainer;
@@ -41,9 +44,8 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly NeteaseUiKit.EntryCard myCard;
     private readonly NeteaseUiKit.EntryCard recommendCard;
 
-    // 响应式布局状态（宽屏 ≥900：入口卡片一行、搜索行合一）
+    // 响应式布局状态（宽屏 ≥900：搜索行合一）
     private bool _isWideLayout;
-    private bool _isLandscape;
 
     // 搜索联想浮层（横竖屏切换需要重排行列归属）
     private readonly Border _suggestOverlay;
@@ -110,6 +112,19 @@ public class NeteaseOnlineMusicPage : ContentPage
         accountTap.Tapped += OnAccountTapped;
         accountButton.GestureRecognizers.Add(accountTap);
 
+        // ── 顶部搜索按钮：点击展开/收起搜索行（常驻搜索框取消，省一行纵向空间）──
+        searchButton = new Border
+        {
+            Padding = new Thickness(11, 7),
+            StrokeThickness = 0,
+            StrokeShape = new RoundRectangle { CornerRadius = 16 },
+            Content = new Label { Text = "🔍", FontSize = 13, VerticalOptions = LayoutOptions.Center },
+        };
+        searchButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
+        var searchTap = new TapGestureRecognizer();
+        searchTap.Tapped += (_, _) => _ = ToggleSearchOpenAsync();
+        searchButton.GestureRecognizers.Add(searchTap);
+
         headerGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitionCollection
@@ -118,17 +133,19 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Width = GridLength.Star },
                 new() { Width = GridLength.Auto },
                 new() { Width = GridLength.Auto },
+                new() { Width = GridLength.Auto },
             },
             ColumnSpacing = 8,
             Padding = new Thickness(16, 12, 16, 8),
-            Children = { backButton, titleLabel, qualityButton, accountButton },
+            Children = { backButton, titleLabel, searchButton, qualityButton, accountButton },
         };
         Grid.SetColumn(titleLabel, 1);
-        Grid.SetColumn(qualityButton, 2);
-        Grid.SetColumn(accountButton, 3);
+        Grid.SetColumn(searchButton, 2);
+        Grid.SetColumn(qualityButton, 3);
+        Grid.SetColumn(accountButton, 4);
 
-        // ── 搜索框 ──
-        var searchEntry = new Entry { Placeholder = "搜索歌曲 / 歌单 / 歌手..." };
+        // ── 搜索输入行（默认隐藏，顶部 🔍 按钮展开；打开时聚焦并预热热词）──
+        searchEntry = new Entry { Placeholder = "搜索歌曲 / 歌单 / 歌手..." };
         searchEntry.SetDynamicResource(Entry.TextColorProperty, "TextPrimaryColor");
         searchEntry.SetBinding(Entry.TextProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.SearchQuery), mode: BindingMode.TwoWay));
         searchEntry.ReturnType = ReturnType.Search;
@@ -165,7 +182,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             Content = searchModesLayout,
         };
 
-        // ── 搜索行容器（窄屏：搜索框上、chips 下；宽屏：同一行右侧）──
+        // ── 搜索行容器（默认隐藏；窄屏：搜索框上、chips 下；宽屏：同一行右侧）──
         searchRowGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Star } },
@@ -175,6 +192,7 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Height = GridLength.Auto },
             },
             Children = { searchBorder, searchModesScroll },
+            IsVisible = false,
         };
         Grid.SetRow(searchBorder, 0);
         Grid.SetRow(searchModesScroll, 1);
@@ -538,19 +556,9 @@ public class NeteaseOnlineMusicPage : ContentPage
         // ① 歌单分块网格列数（VM 按卡片定宽推导，跨档重新分块；预留 44 = 左右 margin 32 + 滚动条 12）
         _vm.SetPlaylistGridWidth(w - 44);
 
-        // ② 横屏（宽明显大于高）：搜索框/chips 并入头部行，释放一整行纵向空间。
-        // 首次布局时 contentGrid.Height 可能为 0，用窗口高度兜底（窗口高含标题栏/播放器，
-        // 判定阈值放宽到 1.05 补偿，避免横屏窗口因 h 偏大而判定失败）
+        // ② 宽屏（≥900 或横屏）：搜索行合一；搜索行本身默认隐藏，由顶部 🔍 按钮展开
         double h = contentGrid.Height > 0 ? contentGrid.Height : contentGrid.Window?.Height ?? 0;
         bool landscape = h > 0 && w > h * 1.05;
-        if (landscape != _isLandscape)
-        {
-            _isLandscape = landscape;
-            if (landscape) MergeSearchToHeader();
-            else RestoreSearchRow();
-        }
-
-        // ③ 横屏或宽屏（≥900）：搜索行合一（入口卡为横滑容器，无需重排）
         bool wide = w >= 900 || landscape;
         if (wide != _isWideLayout)
         {
@@ -662,32 +670,26 @@ public class NeteaseOnlineMusicPage : ContentPage
         catch { }
     }
 
-    /// <summary>宽屏（≥900 或横屏）：搜索行合一、歌曲/歌手多列网格。</summary>
+    /// <summary>宽屏（≥900 或横屏）：搜索行合一（入口卡为横滑容器，无需重排）。</summary>
     private void ApplyWideLayout(double w)
     {
-        // 搜索行：一行两列 [Entry | chips]（横屏时搜索元素在头部行，此配置供恢复竖屏使用）
+        // 搜索行：一行两列 [Entry | chips]
         searchRowGrid.RowDefinitions.Clear();
         searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         searchRowGrid.ColumnDefinitions.Clear();
         searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
         searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        if (!_isLandscape)
-        {
-            Grid.SetRow(searchBorder, 0);
-            Grid.SetColumn(searchBorder, 0);
-            searchBorder.Margin = new Thickness(16, 0, 8, 0);
-            Grid.SetRow(searchModesScroll, 0);
-            Grid.SetColumn(searchModesScroll, 1);
-            searchModesScroll.Margin = new Thickness(0, 0, 16, 0);
-            searchModesScroll.VerticalOptions = LayoutOptions.Center;
-            searchModesLayout.Padding = new Thickness(0);
-        }
-
-        // 入口卡片：横滑容器，宽窄屏通用，无需重排
-        // 歌曲/歌手列表恒为线性单列（GridItemsLayout 在 WinUI 不可靠）
+        Grid.SetRow(searchBorder, 0);
+        Grid.SetColumn(searchBorder, 0);
+        searchBorder.Margin = new Thickness(16, 0, 8, 0);
+        Grid.SetRow(searchModesScroll, 0);
+        Grid.SetColumn(searchModesScroll, 1);
+        searchModesScroll.Margin = new Thickness(0, 0, 16, 0);
+        searchModesScroll.VerticalOptions = LayoutOptions.Center;
+        searchModesLayout.Padding = new Thickness(0);
     }
 
-    /// <summary>窄屏（&lt;900 且非横屏）：搜索框在上 chips 在下、入口卡片两列三行、列表单列。</summary>
+    /// <summary>窄屏（&lt;900 且非横屏）：搜索框在上 chips 在下、列表单列。</summary>
     private void ApplyNarrowLayout()
     {
         // 搜索行：两行 [搜索框 / chips]
@@ -696,87 +698,39 @@ public class NeteaseOnlineMusicPage : ContentPage
         searchRowGrid.RowDefinitions.Clear();
         searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        if (!_isLandscape)
-        {
-            Grid.SetRow(searchBorder, 0);
-            Grid.SetColumn(searchBorder, 0);
-            searchBorder.Margin = new Thickness(16, 0, 16, 4);
-            Grid.SetRow(searchModesScroll, 1);
-            Grid.SetColumn(searchModesScroll, 0);
-            searchModesScroll.Margin = new Thickness(0);
-            searchModesScroll.VerticalOptions = LayoutOptions.Fill;
-            searchModesLayout.Padding = new Thickness(16, 0, 16, 6);
-        }
-
-        // 入口卡片：横滑容器，宽窄屏通用
-        // 歌曲列表恒为线性单列（GridItemsLayout 在 WinUI 不可靠）
-    }
-
-    /// <summary>横屏：搜索框 + chips 并入头部行（隐藏标题腾位），释放 contentGrid 一整行纵向空间。</summary>
-    private void MergeSearchToHeader()
-    {
-        // 从搜索行移除搜索元素，再放入头部行
-        searchRowGrid.Children.Remove(searchBorder);
-        searchRowGrid.Children.Remove(searchModesScroll);
-        searchRowGrid.IsVisible = false;
-
-        // 头部行重排：返回 | 标题(隐藏) | 搜索框(Star) | chips | 音质 | 账号
-        headerGrid.ColumnDefinitions.Clear();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // back
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // title（隐藏）
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star }); // search
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // chips
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // quality
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // account
-
-        titleLabel.IsVisible = false;
-        headerGrid.Children.Add(searchBorder);
-        headerGrid.Children.Add(searchModesScroll);
-        Grid.SetColumn(titleLabel, 1);
-        Grid.SetColumn(searchBorder, 2);
-        Grid.SetColumn(searchModesScroll, 3);
-        Grid.SetColumn(qualityButton, 4);
-        Grid.SetColumn(accountButton, 5);
-
-        searchBorder.Margin = new Thickness(0, 0, 8, 0);
-        searchBorder.VerticalOptions = LayoutOptions.Center;
+        Grid.SetRow(searchBorder, 0);
+        Grid.SetColumn(searchBorder, 0);
+        searchBorder.Margin = new Thickness(16, 0, 16, 4);
+        Grid.SetRow(searchModesScroll, 1);
+        Grid.SetColumn(searchModesScroll, 0);
         searchModesScroll.Margin = new Thickness(0);
-        searchModesScroll.VerticalOptions = LayoutOptions.Center;
-        searchModesLayout.Padding = new Thickness(0);
-        headerGrid.Padding = new Thickness(16, 6, 16, 6);
-
-        // 联想浮层上移至头部行正下方（搜索行已隐藏，行 1 折叠为 0 高，浮层从行 1 起覆盖）
-        Grid.SetRow(_suggestOverlay, 1);
-        Grid.SetRowSpan(_suggestOverlay, 4);
+        searchModesScroll.VerticalOptions = LayoutOptions.Fill;
+        searchModesLayout.Padding = new Thickness(16, 0, 16, 6);
     }
 
-    /// <summary>恢复竖屏：搜索框/chips 回到搜索行，头部行恢复标题。</summary>
-    private void RestoreSearchRow()
+    /// <summary>
+    /// 顶部 🔍 按钮：展开/收起搜索输入行。展开时聚焦输入框（联想浮层随之挂出）；
+    /// 收起时清空关键词并回到歌单广场上下文（退出搜索结果/榜单浏览态）。
+    /// </summary>
+    private async Task ToggleSearchOpenAsync()
     {
-        // 从头部行移除搜索元素
-        headerGrid.Children.Remove(searchBorder);
-        headerGrid.Children.Remove(searchModesScroll);
-
-        // 头部行恢复：返回 | 标题(Star) | 音质 | 账号
-        headerGrid.ColumnDefinitions.Clear();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(titleLabel, 1);
-        Grid.SetColumn(qualityButton, 2);
-        Grid.SetColumn(accountButton, 3);
-        titleLabel.IsVisible = true;
-        headerGrid.Padding = new Thickness(16, 12, 16, 8);
-
-        // 搜索元素放回搜索行（行列归属与边距由 ApplyWideLayout/ApplyNarrowLayout 设置）
-        searchRowGrid.Children.Add(searchBorder);
-        searchRowGrid.Children.Add(searchModesScroll);
-        searchRowGrid.IsVisible = true;
-
-        // 联想浮层回到搜索行下方（行 1 搜索框本身不被遮挡）
-        Grid.SetRow(_suggestOverlay, 2);
-        Grid.SetRowSpan(_suggestOverlay, 3);
+        _searchOpen = !_searchOpen;
+        searchRowGrid.IsVisible = _searchOpen;
+        if (_searchOpen)
+        {
+            searchEntry.Focus();
+            return;
+        }
+        try
+        {
+            searchEntry.Unfocus();
+            if (!string.IsNullOrEmpty(_vm.SearchQuery))
+            {
+                _vm.SearchQuery = ""; // 触发 TextChanged 清空联想
+                await _vm.BackToPlaylistsAsync();
+            }
+        }
+        catch { }
     }
 
     private async Task OpenSimilarPlaylistsAsync()
