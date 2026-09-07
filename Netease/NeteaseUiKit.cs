@@ -1044,7 +1044,8 @@ public static class NeteaseUiKit
         {
             WidthRequest = d,
             HeightRequest = d,
-            StrokeThickness = 0,
+            StrokeThickness = 2,
+            Stroke = Colors.Red, // 部署指纹：v0.3.18 验证用，确认加载后移除
             StrokeShape = new RoundRectangle { CornerRadius = d / 2 },
             HorizontalOptions = LayoutOptions.Center,
         };

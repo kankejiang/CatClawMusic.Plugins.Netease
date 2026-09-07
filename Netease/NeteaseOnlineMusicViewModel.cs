@@ -433,8 +433,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     public ObservableCollection<ArtistGridRow> TabArtistRows { get; } = new();
 
-    /// <summary>130dp：竖屏手机（~436dp 可用宽）恰好推导出 3 列，宽屏自动加列（上限 6）</summary>
-    public const double ArtistCardWidth = 130;
+    /// <summary>100dp：部署指纹版（v0.3.18 期望竖屏 4 列）；确认部署后调回 130（3 列）</summary>
+    public const double ArtistCardWidth = 100;
     private const double ArtistCardSpacing = 10;
     private int _artistGridSpan = 2;
     private int _artistPage;
