@@ -527,6 +527,9 @@ public class NeteaseOnlineMusicPage : ContentPage
             RemainingItemsThreshold = 4,
         };
         _tabArtistsView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreArtistsAsync();
+        // 列数直接挂网格自身 SizeChanged：contentGrid.SizeChanged 在部分机型上不可靠，
+        // 会导致歌手网格恒为初始 2 列（列数推导从未拿到有效宽度）
+        _tabArtistsView.SizeChanged += (_, _) => _vm.SetArtistGridWidth(_tabArtistsView.Width - 44);
         _tabArtistsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.TabArtistRows));
         _tabArtistsView.ItemTemplate = new DataTemplate(() =>
         {
