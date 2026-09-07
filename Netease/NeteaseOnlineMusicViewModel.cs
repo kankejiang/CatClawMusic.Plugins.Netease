@@ -445,7 +445,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         if (availableWidth <= 0) return;
         var span = (int)Math.Floor((availableWidth + ArtistCardSpacing) / (ArtistCardWidth + ArtistCardSpacing));
-        span = Math.Clamp(span, 2, 6);
+        span = Math.Clamp(span, 3, 6); // 竖屏手机最少 3 列（120dp 卡在 ~400dp 可用宽下公式会算出 2，强行拉到 3 恰好放满）
         Log.Debug("NeteaseHome", $"SetArtistGridWidth w={availableWidth:F0} span={span} old={_artistGridSpan} rows={TabArtistRows.Count}");
         if (span == _artistGridSpan) return;
         _artistGridSpan = span;
