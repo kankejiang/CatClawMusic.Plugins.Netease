@@ -995,6 +995,7 @@ public static class NeteaseUiKit
             artist.SetBinding(Label.TextProperty, new Binding(nameof(OnlineSong.Artist)));
             return new Grid
             {
+                HeightRequest = 38, // 行高固定：封面 32 + 上下留白；否则 Android 上 Auto 行会被流式封面图片撑爆
                 ColumnDefinitions = new ColumnDefinitionCollection
                 {
                     new() { Width = GridLength.Auto },
