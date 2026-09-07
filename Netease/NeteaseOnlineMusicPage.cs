@@ -421,29 +421,29 @@ public class NeteaseOnlineMusicPage : ContentPage
         _suggestOverlay.SetDynamicResource(Border.BackgroundColorProperty, "WindowBackgroundColor");
 
         // ── 组装页面 ──
+        // 入口大卡与分类 chips 挂在歌单列表 Header：随列表一起滚动（手指在大卡区上滑即可滚动页面），
+        // 歌单网格的 CollectionView 虚拟化与分页加载不受影响。
+        // 搜索/歌曲/歌手模式下 _playlistsView 隐藏，Header（大卡）随之隐藏，结果页更聚焦。
+        _playlistsView.Header = new VerticalStackLayout { Children = { entryContainer, categoriesScroll } };
+
         contentGrid = new Grid
         {
             RowDefinitions = new RowDefinitionCollection
             {
                 new() { Height = GridLength.Auto }, // header
-                new() { Height = GridLength.Auto }, // search row（搜索框 + chips）
-                new() { Height = GridLength.Auto }, // entry cards
-                new() { Height = GridLength.Auto }, // categories
+                new() { Height = GridLength.Auto }, // search row（默认隐藏，🔍 按钮展开）
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, searchRowGrid, entryContainer, categoriesScroll, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder, _suggestOverlay },
+            Children = { headerGrid, searchRowGrid, _playlistsView, _artistsView, _songsView, _loadingIndicator, tipBorder, _suggestOverlay },
         };
         Grid.SetRow(searchRowGrid, 1);
-        Grid.SetRow(entryContainer, 2);
-        Grid.SetRow(categoriesScroll, 3);
-        Grid.SetRow(_playlistsView, 4);
-        Grid.SetRow(_artistsView, 4);
-        Grid.SetRow(_songsView, 4);
-        Grid.SetRow(_loadingIndicator, 4);
-        Grid.SetRow(tipBorder, 4);
-        // 联想浮层覆盖搜索行下方区域（含内容区），置于顶层最后渲染
+        Grid.SetRow(_playlistsView, 2);
+        Grid.SetRow(_artistsView, 2);
+        Grid.SetRow(_songsView, 2);
+        Grid.SetRow(_loadingIndicator, 2);
+        Grid.SetRow(tipBorder, 2);
+        // 联想浮层覆盖内容区，置于顶层最后渲染
         Grid.SetRow(_suggestOverlay, 2);
-        Grid.SetRowSpan(_suggestOverlay, 3);
 
         Content = contentGrid;
 
@@ -578,7 +578,9 @@ public class NeteaseOnlineMusicPage : ContentPage
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
             ItemsUpdatingScrollMode = ItemsUpdatingScrollMode.KeepScrollOffset,
             SelectionMode = SelectionMode.None,
-            Margin = new Thickness(16, 6, 16, 0),
+            // 左右 16 边距不能放这里：Header（入口大卡）在 Margin 内侧会被二次缩进，
+            // 大卡/chips 自带 Padding 16，行模板的 row 自带 Margin 16
+            Margin = new Thickness(0, 6, 0, 0),
             RemainingItemsThreshold = 6,
         };
         view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
@@ -597,7 +599,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         var row = new HorizontalStackLayout
         {
             Spacing = 10,
-            Margin = new Thickness(0, 0, 0, 10),
+            Margin = new Thickness(16, 0, 16, 10), // 左右 16 由行自身承担（网格 Margin 已归零，见 CreatePlaylistsView）
         };
         BindableLayout.SetItemTemplate(row, new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate(
             NeteaseOnlineMusicViewModel.PlaylistCardWidth, _vm.OpenPlaylistCardCommand)));
