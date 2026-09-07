@@ -993,7 +993,7 @@ public static class NeteaseUiKit
             var artist = new Label { FontSize = 10, MaxLines = 1, LineBreakMode = LineBreakMode.TailTruncation, VerticalOptions = LayoutOptions.Center };
             artist.SetDynamicResource(Label.TextColorProperty, "TextHintColor");
             artist.SetBinding(Label.TextProperty, new Binding(nameof(OnlineSong.Artist)));
-            return new Grid
+            var row = new Grid
             {
                 HeightRequest = 38, // 行高固定：封面 32 + 上下留白；否则 Android 上 Auto 行会被流式封面图片撑爆
                 ColumnDefinitions = new ColumnDefinitionCollection
@@ -1004,8 +1004,15 @@ public static class NeteaseUiKit
                 },
                 ColumnSpacing = 8,
                 Padding = new Thickness(0, 3),
-                Children = { cover, title, artist },
             };
+            // Grid.Children 初始化器不自动分配列，必须显式设置（详见 Page.Cell helper 注释）
+            Grid.SetColumn(cover, 0);
+            Grid.SetColumn(title, 1);
+            Grid.SetColumn(artist, 2);
+            row.Children.Add(cover);
+            row.Children.Add(title);
+            row.Children.Add(artist);
+            return row;
         });
         var songsHost = new VerticalStackLayout { Spacing = 0 };
         songsHost.SetBinding(BindableLayout.ItemsSourceProperty, new Binding(nameof(ToplistBlock.TopSongs)));
