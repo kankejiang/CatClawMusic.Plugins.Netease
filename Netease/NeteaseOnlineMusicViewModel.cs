@@ -446,6 +446,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         if (availableWidth <= 0) return;
         var span = (int)Math.Floor((availableWidth + ArtistCardSpacing) / (ArtistCardWidth + ArtistCardSpacing));
         span = Math.Clamp(span, 2, 6);
+        Log.Debug("NeteaseHome", $"SetArtistGridWidth w={availableWidth:F0} span={span} old={_artistGridSpan} rows={TabArtistRows.Count}");
         if (span == _artistGridSpan) return;
         _artistGridSpan = span;
         RechunkArtists();
