@@ -163,11 +163,12 @@ public class NeteaseSearchPage : ContentPage
         }));
         songsView.SelectionChanged += OnSongSelected;
 
-        var songsHost = new VerticalStackLayout { Spacing = 0 };
-        songsHost.Add(songsHeader);
-        songsHost.Add(songsView);
-        songsHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
-        Opaque(songsHost);
+        // 歌曲列表：标题栏作为 CollectionView.Header（随内容滚动）。
+        // 视图必须直接放进 Grid 星号行——嵌 VerticalStackLayout 等无界高度容器会
+        // 失去虚拟化与滚动（以为自身全可见，超出屏幕的行被裁掉，无法上滑）。
+        songsView.Header = songsHeader;
+        songsView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        songsHeader.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
 
         // ── 结果区：歌单（分页网格，与主页同款分块行方案）──
         var playlistsView = new CollectionView
@@ -189,9 +190,9 @@ public class NeteaseSearchPage : ContentPage
             return row;
         });
 
-        var playlistsHost = new VerticalStackLayout { Spacing = 0, Children = { playlistsView } };
-        playlistsHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
-        Opaque(playlistsHost);
+        // 歌单结果：直接放星号行（滚动/虚拟化依赖有界高度），不透明背景盖住下层
+        playlistsView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        playlistsView.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
 
         // ── 结果区：歌手 ──
         var artistsView = new CollectionView
@@ -203,9 +204,9 @@ public class NeteaseSearchPage : ContentPage
         artistsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateArtistItemTemplate());
         artistsView.SelectionChanged += OnArtistSelected;
 
-        var artistsHost = new VerticalStackLayout { Spacing = 0, Children = { artistsView } };
-        artistsHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
-        Opaque(artistsHost);
+        // 歌手结果：直接放星号行 + 不透明背景
+        artistsView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        artistsView.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
 
         // ── 加载指示 + 状态文字 ──
         var loading = new ActivityIndicator
@@ -235,7 +236,12 @@ public class NeteaseSearchPage : ContentPage
             Margin = new Thickness(20, 10, 0, 2),
         };
         suggestTitle.SetDynamicResource(Label.TextColorProperty, "TextSecondaryColor");
-        var suggestMask = new VerticalStackLayout { Spacing = 0, Children = { suggestTitle, suggestFlex } };
+        var suggestMask = new VerticalStackLayout
+        {
+            Spacing = 0,
+            VerticalOptions = LayoutOptions.Fill, // 撑满星号行，保证不透明遮罩全覆盖
+            Children = { suggestTitle, suggestFlex },
+        };
         suggestMask.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsSuggestVisible));
         Opaque(suggestMask);
         // 遮罩背景吃掉点击（防止透传到下层结果）；再点一次收起键盘
@@ -250,12 +256,12 @@ public class NeteaseSearchPage : ContentPage
                 new() { Height = GridLength.Auto }, // 模式 chips
                 new() { Height = GridLength.Star }, // 结果
             },
-            Children = { modesScroll, songsHost, playlistsHost, artistsHost, loading, suggestMask },
+            Children = { modesScroll, songsView, playlistsView, artistsView, loading, suggestMask },
         };
         Grid.SetRow(modesScroll, 0);
-        Grid.SetRow(songsHost, 1);
-        Grid.SetRow(playlistsHost, 1);
-        Grid.SetRow(artistsHost, 1);
+        Grid.SetRow(songsView, 1);
+        Grid.SetRow(playlistsView, 1);
+        Grid.SetRow(artistsView, 1);
         Grid.SetRow(loading, 1);
         Grid.SetRow(suggestMask, 1); // 遮罩最后加入 → 顶层渲染
 
