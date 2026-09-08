@@ -42,7 +42,7 @@ public class NeteaseOnlineMusicPage : ContentPage
     private readonly List<(Label Label, BoxView Underline)> _tabViews = new();
     private ScrollView? _featuredScroll;
     private View? _squareHost;
-    private ScrollView? _toplistsScroll;
+    private Grid? _toplistsHost;
     private View? _artistsTabHost;
     private CollectionView? _tabArtistsView;
 
@@ -398,7 +398,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(_playlistsView, 1);
         _squareHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSquare));
 
-        // ── 排行榜 tab：榜单色块横滑 + 官方榜 Top3 卡 ──
+        // ── 排行榜 tab：榜单色块横滑 + 官方榜 Top3 卡（虚拟化：星号行 CollectionView 分批上屏）──
         var colorCardsHost = new HorizontalStackLayout { Spacing = 10, Padding = new Thickness(16, 2, 16, 6) };
         _vm.ToplistColors.CollectionChanged += (_, _) => colorCardsHost.Dispatcher?.Dispatch(() =>
         {
@@ -411,17 +411,41 @@ public class NeteaseOnlineMusicPage : ContentPage
                 colorCardsHost.Children.Add(card);
             }
         });
-        var blocksHost = new VerticalStackLayout { Spacing = 8, Margin = new Thickness(14, 0, 14, 0) };
-        BindableLayout.SetItemsSource(blocksHost, _vm.ToplistBlocks);
-        BindableLayout.SetItemTemplate(blocksHost, new DataTemplate(() =>
-            NeteaseUiKit.CreateToplistTop3Card(_vm.OpenToplistCommand)));
-        var toplistsRoot = new VerticalStackLayout { Spacing = 0 };
-        toplistsRoot.Add(BuildSectionHeader("榜单推荐", null, null));
-        toplistsRoot.Add(new ScrollView { Orientation = ScrollOrientation.Horizontal, HorizontalScrollBarVisibility = ScrollBarVisibility.Never, Content = colorCardsHost });
-        toplistsRoot.Add(BuildSectionHeader("官方榜", null, null));
-        toplistsRoot.Add(blocksHost);
-        _toplistsScroll = new ScrollView { Content = toplistsRoot };
-        _toplistsScroll.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowToplists));
+        // 官方榜 Top3 卡：CollectionView 星号行（有界高度才有虚拟化——原 VerticalStackLayout BindableLayout
+        // 一次性物化全部 ~30 张卡 + ~100 行歌曲，进入排行榜 tab 必卡）；滚到底自动追加下一批
+        var blocksView = new CollectionView
+        {
+            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
+            SelectionMode = SelectionMode.None,
+            Margin = new Thickness(14, 0, 14, 0),
+            ItemsUpdatingScrollMode = ItemsUpdatingScrollMode.KeepScrollOffset,
+            RemainingItemsThreshold = 2,
+        };
+        blocksView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        blocksView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.ToplistBlocks));
+        blocksView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateToplistTop3Card(_vm.OpenToplistCommand));
+        blocksView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreToplistsAsync();
+        var toplistHeader = BuildSectionHeader("榜单推荐", null, null);
+        var toplistColorsScroll = new ScrollView { Orientation = ScrollOrientation.Horizontal, HorizontalScrollBarVisibility = ScrollBarVisibility.Never, Content = colorCardsHost };
+        var officialHeader = BuildSectionHeader("官方榜", null, null);
+        var toplistsHost = new Grid
+        {
+            RowDefinitions = new RowDefinitionCollection
+            {
+                new() { Height = GridLength.Auto }, // 榜单推荐标题
+                new() { Height = GridLength.Auto }, // 色块横滑
+                new() { Height = GridLength.Auto }, // 官方榜标题
+                new() { Height = GridLength.Star }, // Top3 卡（虚拟化）
+            },
+            Children = { toplistHeader, toplistColorsScroll, officialHeader, blocksView },
+        };
+        Grid.SetRow(toplistHeader, 0);
+        Grid.SetRow(toplistColorsScroll, 1);
+        Grid.SetRow(officialHeader, 2);
+        Grid.SetRow(blocksView, 3);
+        toplistsHost.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        toplistsHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowToplists));
+        _toplistsHost = toplistsHost;
 
         // ── 歌手 tab：地区/性别 chips + 圆头像双列网格（分页加载）──
         var regionChips = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 8, 16, 2) };
@@ -479,13 +503,13 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Height = GridLength.Auto }, // 一级 tab 栏
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, tabsBar, _featuredScroll!, _squareHost!, _toplistsScroll!, _artistsTabHost!, _artistsView, _songsView, _loadingIndicator, tipBorder },
+            Children = { headerGrid, tabsBar, _featuredScroll!, _squareHost!, _toplistsHost!, _artistsTabHost!, _artistsView, _songsView, _loadingIndicator, tipBorder },
         };
         Grid.SetRow(headerGrid, 0);
         Grid.SetRow(tabsBar, 1);
         Grid.SetRow(_featuredScroll!, 2);
         Grid.SetRow(_squareHost!, 2);
-        Grid.SetRow(_toplistsScroll!, 2);
+        Grid.SetRow(_toplistsHost!, 2);
         Grid.SetRow(_artistsTabHost!, 2);
         Grid.SetRow(_artistsView, 2);
         Grid.SetRow(_songsView, 2);

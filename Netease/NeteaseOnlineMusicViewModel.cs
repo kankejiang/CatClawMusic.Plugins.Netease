@@ -382,14 +382,13 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         IsLoading = true;
         try
         {
+            // 全量榜单取回内存池（client 有当天磁盘缓存，跨启动秒开），UI 只分批显示
             var blocks = await Task.Run(() => _plugin.ApiClient.GetToplistBlocksAsync());
+            _allToplistBlocks = blocks ?? new List<ToplistBlock>();
+            _toplistShown = 0;
             ToplistBlocks.Clear();
             ToplistColors.Clear();
-            foreach (var b in blocks)
-            {
-                ToplistBlocks.Add(b);
-                ToplistColors.Add(b.Playlist);
-            }
+            AppendToplistBatch();
         }
         catch { }
         finally
@@ -397,14 +396,42 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             // 不等 Top3：loading 先撤，色块与榜单名立即可见
             IsLoading = false;
         }
-        // Top3 渐进补拉：轻量单榜请求（头部 N 首），完成一个填一个，不阻塞 UI
+        // 新增批次内缺 Top3 预览的榜单：后台逐个补拉（已带 tracks 的直接跳过）
         _ = FillTop3Async();
+    }
+
+    /// <summary>ToplistBatchSize：每批上屏的官方榜卡数（虚拟化列表滚动到底自动追加下一批）</summary>
+    private const int ToplistBatchSize = 6;
+    private List<ToplistBlock> _allToplistBlocks = new();
+    private int _toplistShown;
+
+    /// <summary>追加下一批榜单卡（内存池 → UI 集合），返回是否有新增</summary>
+    private bool AppendToplistBatch()
+    {
+        var batch = _allToplistBlocks.Skip(_toplistShown).Take(ToplistBatchSize).ToList();
+        foreach (var b in batch)
+        {
+            ToplistBlocks.Add(b);
+            ToplistColors.Add(b.Playlist);
+        }
+        _toplistShown += batch.Count;
+        return batch.Count > 0;
+    }
+
+    /// <summary>官方榜列表滚动到底：追加下一批榜单 + 补拉新批次缺的 Top3 预览</summary>
+    [RelayCommand]
+    public async Task LoadMoreToplistsAsync()
+    {
+        if (!AppendToplistBatch()) return;
+        _ = FillTop3Async();
+        await Task.CompletedTask;
     }
 
     /// <summary>逐榜补拉 Top3 预览；await 回 UI 线程后 Add 即时刷新对应卡片行</summary>
     private async Task FillTop3Async()
     {
-        var need = ToplistBlocks.Where(b => b.TopSongs.Count == 0).Take(6).ToList();
+        // 只补当前已上屏批次里缺预览的榜单（后台取数已由 Task.Run 保证不占主线程）
+        var need = ToplistBlocks.Where(b => b.TopSongs.Count == 0).ToList();
         foreach (var b in need)
         {
             try
