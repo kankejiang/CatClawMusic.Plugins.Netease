@@ -352,14 +352,38 @@ public class NeteaseOpenApiClient
     /// <summary>
     /// 排行榜聚合详情（GET /api/toplist/detail）：全部榜单 + 更新频率，一次请求。
     /// 匿名下 tracks 预览多为空壳，Top3 由调用方按需经 GetPlaylistSongsAsync 补齐。
+    /// 当天结果落盘缓存（netease_toplists_cache.json）：跨启动秒开，榜单每日更新按日期失效。
     /// </summary>
+    private static readonly string ToplistCachePath =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CatClawMusic.Maui", "netease_toplists_cache.json");
+    private List<ToplistBlock>? _toplistCache;
+    private string? _toplistCacheDate;
+
+    private sealed class ToplistCacheDto
+    {
+        public string Date { get; set; } = "";
+        public List<ToplistBlock> Blocks { get; set; } = new();
+    }
+
     public async Task<List<ToplistBlock>> GetToplistBlocksAsync()
     {
+        // 三级：内存 → 当天磁盘缓存 → 网络（榜单每日更新，按日期失效）
+        var today = DateTime.Today.ToString("yyyy-MM-dd");
+        if (_toplistCacheDate == today && _toplistCache is { Count: > 0 }) return _toplistCache;
+        var fromDisk = await LoadToplistCacheAsync(today).ConfigureAwait(false);
+        if (fromDisk is { Count: > 0 })
+        {
+            _toplistCache = fromDisk;
+            _toplistCacheDate = today;
+            return fromDisk;
+        }
+
         try
         {
-            using var doc = await GetJsonAsync("https://music.163.com/api/toplist/detail");
+            using var doc = await GetJsonAsync("https://music.163.com/api/toplist/detail").ConfigureAwait(false);
             if (doc == null || !doc.RootElement.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array)
-                return new List<ToplistBlock>();
+                return _toplistCache ?? new List<ToplistBlock>();
             var result = new List<ToplistBlock>();
             foreach (var t in list.EnumerateArray())
             {
@@ -388,9 +412,37 @@ public class NeteaseOpenApiClient
                 }
                 result.Add(block);
             }
+            _toplistCache = result;
+            _toplistCacheDate = today;
+            await SaveToplistCacheAsync(today, result).ConfigureAwait(false);
             return result;
         }
-        catch { return new List<ToplistBlock>(); }
+        catch { return _toplistCache ?? new List<ToplistBlock>(); }
+    }
+
+    private static async Task<List<ToplistBlock>?> LoadToplistCacheAsync(string date)
+    {
+        try
+        {
+            if (!File.Exists(ToplistCachePath)) return null;
+            var json = await File.ReadAllTextAsync(ToplistCachePath).ConfigureAwait(false);
+            var dto = JsonSerializer.Deserialize<ToplistCacheDto>(json);
+            if (dto?.Date != date || dto.Blocks is not { Count: > 0 }) return null;
+            return dto.Blocks;
+        }
+        catch { return null; }
+    }
+
+    private static async Task SaveToplistCacheAsync(string date, List<ToplistBlock> blocks)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(ToplistCachePath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            var dto = new ToplistCacheDto { Date = date, Blocks = blocks };
+            await File.WriteAllTextAsync(ToplistCachePath, JsonSerializer.Serialize(dto)).ConfigureAwait(false);
+        }
+        catch { }
     }
 
     /// <summary>歌手搜索（cloudsearch type=100）</summary>
