@@ -351,10 +351,11 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         IsLoading = true;
         try
         {
+            // 取数段全部在后台执行（Task.Run 内 await 不回 UI 线程），解析/映射不再占主线程
             var p = _featuredBasePage + 1;
-            var t1 = _plugin.GetPlaylistsPageAsync(null, p);
-            var t2 = _plugin.GetPlaylistsPageAsync(null, p + 1);
-            var t3 = _plugin.GetPlaylistsPageAsync(null, p + 2);
+            var t1 = Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p));
+            var t2 = Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p + 1));
+            var t3 = Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p + 2));
             SetCollection(FeaturedPlaylists, await t1);
             SetCollection(DiscoveryPlaylists, await t2);
             SetCollection(DailyPlaylists, await t3);
@@ -381,7 +382,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var blocks = await _plugin.ApiClient.GetToplistBlocksAsync();
+            var blocks = await Task.Run(() => _plugin.ApiClient.GetToplistBlocksAsync());
             ToplistBlocks.Clear();
             ToplistColors.Clear();
             foreach (var b in blocks)
@@ -408,7 +409,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         {
             try
             {
-                var songs = await _plugin.ApiClient.GetPlaylistSongsFirstPageAsync(b.Playlist.Id, 3);
+                var songs = await Task.Run(() => _plugin.ApiClient.GetPlaylistSongsFirstPageAsync(b.Playlist.Id, 3));
                 foreach (var s in songs.Take(3)) b.TopSongs.Add(s);
             }
             catch { }
@@ -555,17 +556,17 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             List<NeteaseArtist> batch;
             if (codes.Count == 0)
             {
-                batch = await _plugin.ApiClient.GetTopArtistsAsync(perPage, (_artistPage - 1) * perPage);
+                batch = await Task.Run(() => _plugin.ApiClient.GetTopArtistsAsync(perPage, (_artistPage - 1) * perPage));
             }
             else if (codes.Count == 1)
             {
-                batch = await _plugin.ApiClient.GetArtistsByCategoryAsync(codes[0], perPage, (_artistPage - 1) * perPage);
+                batch = await Task.Run(() => _plugin.ApiClient.GetArtistsByCategoryAsync(codes[0], perPage, (_artistPage - 1) * perPage));
             }
             else
             {
                 // 地区 + 全部性别：三码各取一半并交错合并，避免按分类整块聚簇
                 var tasks = codes.Select(c => _plugin.ApiClient.GetArtistsByCategoryAsync(c, perPage / 2, (_artistPage - 1) * perPage / 2));
-                var groups = await Task.WhenAll(tasks);
+                var groups = await Task.Run(() => Task.WhenAll(tasks));
                 batch = groups.SelectMany(x => x).ToList();
             }
             if (batch.Count == 0)
@@ -695,7 +696,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         try
         {
             var category = SelectedCategory == "全部" ? null : SelectedCategory;
-            var pls = await _plugin.GetPlaylistsPageAsync(category, 1);
+            var pls = await Task.Run(() => _plugin.GetPlaylistsPageAsync(category, 1));
             foreach (var pl in pls ?? new List<OnlinePlaylist>())
                 Playlists.Add(pl);
             PlaylistStatus = Playlists.Count == 0 ? "该分类暂无歌单" : "";
@@ -729,7 +730,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                 case BrowseContext.Square when ShowPlaylists:
                 {
                     var category = SelectedCategory == "全部" ? null : SelectedCategory;
-                    var next = await _plugin.GetPlaylistsPageAsync(category, _playlistPage + 1);
+                    var next = await Task.Run(() => _plugin.GetPlaylistsPageAsync(category, _playlistPage + 1));
                     if (next != null && next.Count > 0)
                     {
                         _playlistPage++;
@@ -739,11 +740,11 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                 }
                 case BrowseContext.SearchSongs when ShowSongs && _lastQuery.Length > 0:
                 {
-                    var next = await _plugin.SearchAsync(_lastQuery, _searchPage + 1, SearchPageSize);
+                    var next = await Task.Run(() => _plugin.SearchAsync(_lastQuery, _searchPage + 1, SearchPageSize));
                     if (next != null && next.Count > 0)
                     {
                         _searchPage++;
-                        AppendSongs(next);
+                        await AppendSongs(next);
                     }
                     break;
                 }
@@ -788,8 +789,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         try
         {
             var pageSize = playlist.SongCount > 0 ? playlist.SongCount : 200;
-            var songs = await _plugin.GetPlaylistSongsAsync(playlist, 1, pageSize);
-            FillSongs(songs);
+            var songs = await Task.Run(() => _plugin.GetPlaylistSongsAsync(playlist, 1, pageSize));
+            await FillSongs(songs);
         }
         catch (Exception ex)
         {
@@ -820,7 +821,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Playlists.Clear();
         try
         {
-            var lists = await _plugin.GetToplistsAsync();
+            var lists = await Task.Run(() => _plugin.GetToplistsAsync());
             foreach (var pl in lists) Playlists.Add(pl);
             _browsingToplists = true;
             _context = BrowseContext.Toplists;
@@ -851,7 +852,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Playlists.Clear();
         try
         {
-            var lists = await _plugin.GetUserPlaylistsAsync();
+            var lists = await Task.Run(() => _plugin.GetUserPlaylistsAsync());
             foreach (var pl in lists) Playlists.Add(pl);
             _context = BrowseContext.MyPlaylists;
             PlaylistStatus = Playlists.Count == 0 ? "暂无歌单" : "";
@@ -880,7 +881,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Playlists.Clear();
         try
         {
-            var lists = await _plugin.GetRecommendPlaylistsAsync();
+            var lists = await Task.Run(() => _plugin.GetRecommendPlaylistsAsync());
             foreach (var pl in lists) Playlists.Add(pl);
             _context = BrowseContext.RecommendPlaylists;
             PlaylistStatus = Playlists.Count == 0 ? "今日暂无推荐歌单" : "";
@@ -911,8 +912,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Songs.Clear();
         try
         {
-            var songs = await _plugin.GetPrivateFmAsync(3);  // 官方节奏：初拉 3 首，播到本批最后一首时再拉 3 首
-            FillSongs(songs, markAsFm: true);
+            var songs = await Task.Run(() => _plugin.GetPrivateFmAsync(3));  // 官方节奏：初拉 3 首，播到本批最后一首时再拉 3 首
+            await FillSongs(songs, markAsFm: true);
             SongsStatus = Songs.Count == 0 ? "私人漫游暂无歌曲，稍后再试" : "";
         }
         catch (Exception ex)
@@ -944,8 +945,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Songs.Clear();
         try
         {
-            var songs = await _plugin.GetDailyRecommendAsync(20);
-            FillSongs(songs);
+            var songs = await Task.Run(() => _plugin.GetDailyRecommendAsync(20));
+            await FillSongs(songs);
             SongsStatus = Songs.Count == 0 ? "每日推荐暂无歌曲" : "";
         }
         catch (Exception ex)
@@ -972,8 +973,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Songs.Clear();
         try
         {
-            var songs = await _plugin.GetHistoryRecommendSongsAsync();
-            FillSongs(songs);
+            var songs = await Task.Run(() => _plugin.GetHistoryRecommendSongsAsync());
+            await FillSongs(songs);
             SongsStatus = Songs.Count == 0 ? "暂无历史每日推荐" : "";
         }
         catch (Exception ex)
@@ -999,8 +1000,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         Songs.Clear();
         try
         {
-            var songs = await _plugin.GetSimilarSongsAsync(song.Id);
-            FillSongs(songs);
+            var songs = await Task.Run(() => _plugin.GetSimilarSongsAsync(song.Id));
+            await FillSongs(songs);
             SongsStatus = Songs.Count == 0 ? "暂无相似歌曲" : "";
         }
         catch (Exception ex)
@@ -1082,7 +1083,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                     SongsStatus = "";
                     CurrentListTitle = $"搜索歌单：{q}";
                     Playlists.Clear();
-                    var pls = await _plugin.SearchPlaylistsAsync(q, 30);
+                    var pls = await Task.Run(() => _plugin.SearchPlaylistsAsync(q, 30));
                     foreach (var pl in pls ?? new List<OnlinePlaylist>()) Playlists.Add(pl);
                     PlaylistStatus = Playlists.Count == 0 ? "没有找到相关歌单" : "";
                     ShowCategories = false;
@@ -1095,7 +1096,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                 {
                     _context = BrowseContext.SearchArtists;
                     Artists.Clear();
-                    var artists = await _plugin.SearchArtistsAsync(q, 30);
+                    var artists = await Task.Run(() => _plugin.SearchArtistsAsync(q, 30));
                     foreach (var a in artists ?? new List<NeteaseArtist>()) Artists.Add(a);
                     if (Artists.Count == 0) ShowTip("没有找到相关歌手");
                     ShowCategories = false;
@@ -1110,8 +1111,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
                     SongsStatus = "正在搜索...";
                     CurrentListTitle = $"搜索：{q}";
                     Songs.Clear();
-                    var songs = await _plugin.SearchAsync(q, 1, SearchPageSize);
-                    FillSongs(songs);
+                    var songs = await Task.Run(() => _plugin.SearchAsync(q, 1, SearchPageSize));
+                    await FillSongs(songs);
                     SongsStatus = Songs.Count == 0 ? "没有找到相关歌曲，换个关键词试试" : "";
                     ShowPlaylists = false;
                     ShowArtists = false;
@@ -1481,23 +1482,30 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     // ── 歌曲列表填充辅助 ──
 
     /// <summary>填充歌曲列表（标记红心状态；FM 歌曲额外标记来源）</summary>
-    private void FillSongs(List<OnlineSong>? songs, bool markAsFm = false)
+    private async Task FillSongs(List<OnlineSong>? songs, bool markAsFm = false)
     {
         Songs.Clear();
-        AppendCore(songs, markAsFm);
+        await AppendCore(songs, markAsFm);
     }
 
-    private void AppendSongs(List<OnlineSong>? songs) => AppendCore(songs, false);
+    private Task AppendSongs(List<OnlineSong>? songs) => AppendCore(songs, false);
 
-    private void AppendCore(List<OnlineSong>? songs, bool markAsFm)
+    /// <summary>
+    /// 逐项加入歌曲集合。每 ~80 项 <see cref="Task.Yield"/> 让出一次 UI 帧——
+    /// 歌单详情可达上千项，一次性 Add 会以数百次 CollectionChanged 占死主线程（表现为打开大歌单卡顿）。
+    /// 调用方均在 UI 线程 async 上下文，Yield 后仍回 UI 线程，集合线程安全不变。
+    /// </summary>
+    private async Task AppendCore(List<OnlineSong>? songs, bool markAsFm)
     {
         if (songs == null) return;
+        var added = 0;
         foreach (var s in songs)
         {
             s.Internal ??= new Dictionary<string, object>();
             s.Internal["Liked"] = _likedIds.Contains(s.Id);
             if (markAsFm) s.Internal["FromFm"] = true;
             Songs.Add(s);
+            if (++added % 80 == 0) await Task.Yield();
         }
     }
 
@@ -1578,7 +1586,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     private async Task<int> AppendFmBatchCoreAsync(bool allowDuplicate)
     {
-        var batch = await _plugin.GetPrivateFmAsync(FmBatchSize);
+        // 取数在后台（FM 一次补货含大响应解析 + 每首取直链两次网络往返）
+        var batch = await Task.Run(() => _plugin.GetPrivateFmAsync(FmBatchSize));
         if (batch == null) return 0;
         int added = 0;
         foreach (var os in batch)
@@ -1586,7 +1595,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             if (os == null || string.IsNullOrWhiteSpace(os.Id)) continue;
             if (!allowDuplicate && _fmSongIds.Contains(os.Id)) continue;
             string? url = null;
-            try { url = await _plugin.GetPlayUrlAsync(os, QualityLevel); } catch { }
+            var osLocal = os;
+            try { url = await Task.Run(() => _plugin.GetPlayUrlAsync(osLocal, QualityLevel)); } catch { }
             if (string.IsNullOrWhiteSpace(url)) continue;
             os.Internal ??= new Dictionary<string, object>();
             os.Internal["FromFm"] = true;
@@ -1639,7 +1649,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         try
         {
-            _likedIds = await _plugin.GetLikedSongIdsAsync();
+            // 千项级拉取 + 映射，放后台（登录后 OnAppearing 自动触发，不做会占住主线程）
+            _likedIds = await Task.Run(() => _plugin.GetLikedSongIdsAsync());
             foreach (var s in Songs)
             {
                 s.Internal ??= new Dictionary<string, object>();

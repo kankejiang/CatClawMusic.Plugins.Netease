@@ -58,7 +58,9 @@ public static class NeteaseUiKit
         };
         coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 40, HeightRequest = 40 };
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl), converter: OnlineUrlToStreamImageConverter.Instance) { TargetNullValue = "ic_music_note" });
+        // converterParameter=200：40px 显示位裁剪 ?param=200y200 缩略图——
+        // 不传参数会下载/解码数据层的 1000px 原图（列表滚动持续大图解码，明显掉帧）
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl), converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 200) { TargetNullValue = "ic_music_note" });
         coverBorder.Content = coverImage;
 
         var titleLabel = new Label { FontSize = 14, FontFamily = "OpenSansSemibold", MaxLines = 1 };

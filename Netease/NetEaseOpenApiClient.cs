@@ -1840,15 +1840,15 @@ public class NeteaseOpenApiClient
     {
         try
         {
-            var doc = await SendJsonAsync(HttpMethod.Get, url);
+            var doc = await SendJsonAsync(HttpMethod.Get, url).ConfigureAwait(false);
             // 携带了登录 Cookie 却被判定"需要登录"(code=301)：会话已过期 →
             // 尝试静默续期（/api/login/token/refresh）一次并重试；续期失败再提示用户重登。
             if (doc != null && IsLoginRequired(doc.RootElement)
                 && !string.IsNullOrWhiteSpace(_cookie))
             {
-                if (await RefreshLoginTokenAsync())
+                if (await RefreshLoginTokenAsync().ConfigureAwait(false))
                 {
-                    doc = await SendJsonAsync(HttpMethod.Get, url);
+                    doc = await SendJsonAsync(HttpMethod.Get, url).ConfigureAwait(false);
                 }
                 else
                 {
@@ -1862,9 +1862,10 @@ public class NeteaseOpenApiClient
 
     private async Task<JsonDocument?> SendJsonAsync(HttpMethod method, string url)
     {
-        using var resp = await _http.SendAsync(Build(method, url));
+        // 本类为纯数据层：ConfigureAwait(false) 让响应读取 + JsonDocument.Parse 脱离 UI 线程
+        using var resp = await _http.SendAsync(Build(method, url)).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode) return null;
-        var json = await resp.Content.ReadAsStringAsync();
+        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
         try { return JsonDocument.Parse(json); } catch { return null; }
     }
 
