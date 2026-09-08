@@ -1200,6 +1200,39 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     /// <summary>手动触发搜索时收起联想浮层</summary>
     private void DismissSuggest() { SuggestItems.Clear(); HasSuggestData = false; }
 
+    /// <summary>
+    /// 关闭独立搜索页（返回主页时调用）：清空搜索态并还原当前一级 tab 的视图上下文。
+    /// 精选/排行榜/歌手 tab 的数据集合未被搜索破坏，直接恢复标志位即可；
+    /// 歌单广场的列表可能已被「搜索歌单」结果覆盖 → 重载歌单广场数据。
+    /// </summary>
+    [RelayCommand]
+    public async Task CloseSearchAsync()
+    {
+        SearchQuery = "";
+        DismissSuggest();
+        IsSearchFocused = false;
+        HasSuggestData = false;
+        ShowSongs = false;
+        ShowArtists = false;
+        ShowSimilarPlaylists = false;
+        ShowHistoryDaily = false;
+        SongsStatus = "";
+        CurrentListTitle = "";
+        if (SelectedTabIndex == 1)
+        {
+            ShowPlaylists = true;
+            await LoadPlaylistsAsync();
+        }
+        else
+        {
+            ShowPlaylists = false;
+        }
+        // 重放当前 tab 的显示标志（与 SelectedTabIndex setter 保持一致）
+        ShowFeatured = SelectedTabIndex == 0;
+        ShowToplists = SelectedTabIndex == 2;
+        ShowArtistTab = SelectedTabIndex == 3;
+    }
+
     // ── 播放 ──
 
     /// <summary>全部播放：当前列表整队入队，从第一首开始</summary>

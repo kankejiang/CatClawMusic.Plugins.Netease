@@ -29,14 +29,7 @@ public class NeteaseOnlineMusicPage : ContentPage
     private CollectionView _artistsView;
     private readonly ActivityIndicator _loadingIndicator;
 
-    // 响应式布局引用的控件（宽屏/窄屏切换需要重排行列归属）
-    private readonly Grid searchRowGrid;
-    private readonly Border searchBorder;
-    private readonly Entry searchEntry;
     private readonly Border searchButton;
-    private bool _searchOpen; // 搜索输入行展开状态（顶部搜索按钮控制）
-    private readonly ScrollView searchModesScroll;
-    private readonly HorizontalStackLayout searchModesLayout;
     private readonly ScrollView entryContainer;
     private readonly NeteaseUiKit.EntryCard fmCard;
     private readonly NeteaseUiKit.EntryCard dailyCard;
@@ -52,12 +45,6 @@ public class NeteaseOnlineMusicPage : ContentPage
     private ScrollView? _toplistsScroll;
     private View? _artistsTabHost;
     private CollectionView? _tabArtistsView;
-
-    // 响应式布局状态（宽屏 ≥900：搜索行合一）
-    private bool _isWideLayout;
-
-    // 搜索联想浮层（横竖屏切换需要重排行列归属）
-    private readonly Border _suggestOverlay;
 
     // 歌曲列表头（含返回/标题/播放全部等）
     private readonly Grid _songsHeader;
@@ -121,7 +108,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         accountTap.Tapped += OnAccountTapped;
         accountButton.GestureRecognizers.Add(accountTap);
 
-        // ── 顶部搜索按钮：点击展开/收起搜索行（常驻搜索框取消，省一行纵向空间）──
+        // ── 顶部搜索按钮：推入独立搜索页（热词遮罩 + 结果独立呈现，不再与首页内容叠加）──
         searchButton = new Border
         {
             Padding = new Thickness(11, 7),
@@ -131,7 +118,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         };
         searchButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var searchTap = new TapGestureRecognizer();
-        searchTap.Tapped += (_, _) => _ = ToggleSearchOpenAsync();
+        searchTap.Tapped += async (_, _) => await OpenSearchPageAsync();
         searchButton.GestureRecognizers.Add(searchTap);
 
         headerGrid = new Grid
@@ -152,59 +139,6 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetColumn(searchButton, 2);
         Grid.SetColumn(qualityButton, 3);
         Grid.SetColumn(accountButton, 4);
-
-        // ── 搜索输入行（默认隐藏，顶部 🔍 按钮展开；打开时聚焦并预热热词）──
-        searchEntry = new Entry { Placeholder = "搜索歌曲 / 歌单 / 歌手..." };
-        searchEntry.SetDynamicResource(Entry.TextColorProperty, "TextPrimaryColor");
-        searchEntry.SetBinding(Entry.TextProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.SearchQuery), mode: BindingMode.TwoWay));
-        searchEntry.ReturnType = ReturnType.Search;
-        searchEntry.Completed += async (_, _) => { searchEntry.Unfocus(); await _vm.SearchSongsAsync(); };
-        searchEntry.TextChanged += (_, e) => _ = _vm.OnSearchTextChangedAsync(e.NewTextValue);
-        // 联想/热词浮层仅聚焦时显示（桌面空输入不再常驻热词占一整行）；聚焦无数据时预热热词
-        searchEntry.Focused += async (_, _) =>
-        {
-            _vm.IsSearchFocused = true;
-            if (_vm.SuggestItems.Count == 0) await _vm.OnSearchTextChangedAsync("");
-        };
-        searchEntry.Unfocused += (_, _) => _vm.IsSearchFocused = false;
-
-        searchBorder = new Border
-        {
-            Content = searchEntry,
-            Padding = new Thickness(14, 8),
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 14 },
-            Margin = new Thickness(16, 0, 16, 4),
-        };
-        searchBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-
-        // ── 搜索类型 chips（歌曲/歌单/歌手）──
-        searchModesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 0, 16, 6) };
-        BindableLayout.SetItemsSource(searchModesLayout, _vm.SearchModes);
-        BindableLayout.SetItemTemplate(searchModesLayout,
-            NeteaseUiKit.CreateCategoryChipTemplate(_vm, nameof(NeteaseOnlineMusicViewModel.SelectSearchModeCommand), nameof(CategoryChipItem.Name)));
-        searchModesScroll = new ScrollView
-        {
-            Orientation = ScrollOrientation.Horizontal,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
-            HeightRequest = 36,
-            Content = searchModesLayout,
-        };
-
-        // ── 搜索行容器（默认隐藏；窄屏：搜索框上、chips 下；宽屏：同一行右侧）──
-        searchRowGrid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitionCollection { new() { Width = GridLength.Star } },
-            RowDefinitions = new RowDefinitionCollection
-            {
-                new() { Height = GridLength.Auto },
-                new() { Height = GridLength.Auto },
-            },
-            Children = { searchBorder, searchModesScroll },
-            IsVisible = false,
-        };
-        Grid.SetRow(searchBorder, 0);
-        Grid.SetRow(searchModesScroll, 1);
 
         // ── 功能入口（登录后可见：我的歌单 / 推荐歌单）──
         // 官方首页同款横版封面卡（150×104，封面 + 左下角标题条；封面异步贴图，失败保持渐变兜底）
@@ -364,6 +298,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             Padding = new Thickness(16, 4, 16, 8),
             Children = { songsBackButton, songsTitleLabel, playAllButton, historyDailyButton, similarButton },
         };
+        songsHeader.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
         Grid.SetColumn(songsTitleLabel, 1);
         Grid.SetColumn(playAllButton, 2);
         Grid.SetColumn(historyDailyButton, 3);
@@ -407,28 +342,6 @@ public class NeteaseOnlineMusicPage : ContentPage
             Content = tipLabel,
         };
         tipBorder.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.HasTip));
-
-        // ── 搜索联想/热词浮层（覆盖搜索结果顶部，输入联想与热门搜索）──
-        var suggestFlex = new FlexLayout
-        {
-            Wrap = FlexWrap.Wrap,
-            AlignItems = FlexAlignItems.Start,
-            VerticalOptions = LayoutOptions.Fill,
-        };
-        BindableLayout.SetItemsSource(suggestFlex, _vm.SuggestItems);
-        BindableLayout.SetItemTemplate(suggestFlex, BuildSuggestChipTemplate());
-        _suggestOverlay = new Border
-        {
-            Content = suggestFlex,
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 14 },
-            Padding = new Thickness(12, 8),
-            Margin = new Thickness(12, 2, 12, 8),
-            VerticalOptions = LayoutOptions.Start,
-            MaximumHeightRequest = 320,
-        };
-        _suggestOverlay.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.IsSuggestVisible));
-        _suggestOverlay.SetDynamicResource(Border.BackgroundColorProperty, "WindowBackgroundColor");
 
         // ── 首页一级 tab 栏（精选/歌单广场/排行榜/歌手）──
         for (var i = 0; i < _vm.HomeTabs.Count; i++)
@@ -554,31 +467,30 @@ public class NeteaseOnlineMusicPage : ContentPage
         Grid.SetRow(_tabArtistsView, 2);
         _artistsTabHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtistTab));
 
-        // ── 组装页面：header / tab 栏 / 搜索行（默认隐藏）/ 内容区 ──
+        // ── 组装页面：header / tab 栏 / 内容区 ──
+        // 内容区各视图加不透明窗口背景（视觉折叠：任意列表视图完全盖住同层的 tab 内容）。
+        // 根因：搜索/每日推荐/相似歌曲等列表态只切换 ShowXxx 标志，tab 内容标志未联动，
+        // 同一 Grid 单元多视图叠放时透出下层——除背景外各自可见性仍然独立生效。
         contentGrid = new Grid
         {
             RowDefinitions = new RowDefinitionCollection
             {
                 new() { Height = GridLength.Auto }, // header
                 new() { Height = GridLength.Auto }, // 一级 tab 栏
-                new() { Height = GridLength.Auto }, // search row（默认隐藏，🔍 按钮展开）
                 new() { Height = GridLength.Star }, // content
             },
-            Children = { headerGrid, tabsBar, searchRowGrid, _featuredScroll!, _squareHost!, _toplistsScroll!, _artistsTabHost!, _artistsView, _songsView, _loadingIndicator, tipBorder, _suggestOverlay },
+            Children = { headerGrid, tabsBar, _featuredScroll!, _squareHost!, _toplistsScroll!, _artistsTabHost!, _artistsView, _songsView, _loadingIndicator, tipBorder },
         };
         Grid.SetRow(headerGrid, 0);
         Grid.SetRow(tabsBar, 1);
-        Grid.SetRow(searchRowGrid, 2);
-        Grid.SetRow(_featuredScroll!, 3);
-        Grid.SetRow(_squareHost!, 3);
-        Grid.SetRow(_toplistsScroll!, 3);
-        Grid.SetRow(_artistsTabHost!, 3);
-        Grid.SetRow(_artistsView, 3);
-        Grid.SetRow(_songsView, 3);
-        Grid.SetRow(_loadingIndicator, 3);
-        Grid.SetRow(tipBorder, 3);
-        // 联想浮层覆盖内容区，置于顶层最后渲染
-        Grid.SetRow(_suggestOverlay, 3);
+        Grid.SetRow(_featuredScroll!, 2);
+        Grid.SetRow(_squareHost!, 2);
+        Grid.SetRow(_toplistsScroll!, 2);
+        Grid.SetRow(_artistsTabHost!, 2);
+        Grid.SetRow(_artistsView, 2);
+        Grid.SetRow(_songsView, 2);
+        Grid.SetRow(_loadingIndicator, 2);
+        Grid.SetRow(tipBorder, 2);
 
         Content = contentGrid;
 
@@ -657,32 +569,6 @@ public class NeteaseOnlineMusicPage : ContentPage
         }
     }
 
-    /// <summary>搜索联想/热词 chip 模板（点击回填并搜索）</summary>
-    private DataTemplate BuildSuggestChipTemplate()
-    {
-        return new DataTemplate(() =>
-        {
-            var word = new Label { FontSize = 13, FontFamily = "OpenSansSemibold", MaxLines = 1 };
-            word.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
-            word.SetBinding(Label.TextProperty, new Binding(nameof(SearchSuggestion.Word)));
-            var chip = new Border
-            {
-                StrokeThickness = 0,
-                StrokeShape = new RoundRectangle { CornerRadius = 14 },
-                BackgroundColor = Color.FromArgb("#24111122"),
-                Padding = new Thickness(12, 6),
-                Margin = new Thickness(4, 3),
-                Content = word,
-            };
-            var tap = new TapGestureRecognizer();
-            tap.SetBinding(TapGestureRecognizer.CommandProperty,
-                new Binding(nameof(NeteaseOnlineMusicViewModel.SelectSuggestCommand), source: _vm));
-            tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
-            chip.GestureRecognizers.Add(tap);
-            return chip;
-        });
-    }
-
     /// <summary>区块标题行：左标题 + 右侧可选动作（如「换一批 ↻」，绑 VM 命令名）</summary>
     private View BuildSectionHeader(string title, string? actionText, string? actionCommandName)
     {
@@ -739,20 +625,9 @@ public class NeteaseOnlineMusicPage : ContentPage
     {
         if (w <= 0) return;
 
-        // ① 歌单/歌手分块网格列数（VM 按卡片定宽推导，跨档重新分块；预留 44 = 左右 margin 32 + 滚动条 12）
+        // 歌单/歌手分块网格列数（VM 按卡片定宽推导，跨档重新分块；预留 44 = 左右 margin 32 + 滚动条 12）
         _vm.SetPlaylistGridWidth(w - 44);
         _vm.SetArtistGridWidth(w - 44);
-
-        // ② 宽屏（≥900 或横屏）：搜索行合一；搜索行本身默认隐藏，由顶部 🔍 按钮展开
-        double h = contentGrid.Height > 0 ? contentGrid.Height : contentGrid.Window?.Height ?? 0;
-        bool landscape = h > 0 && w > h * 1.05;
-        bool wide = w >= 900 || landscape;
-        if (wide != _isWideLayout)
-        {
-            _isWideLayout = wide;
-            if (wide) ApplyWideLayout(w);
-            else ApplyNarrowLayout();
-        }
     }
 
     /// <summary>歌单网格视图：外层 CollectionView 虚拟化「行」（LinearItemsLayout），
@@ -767,9 +642,11 @@ public class NeteaseOnlineMusicPage : ContentPage
             SelectionMode = SelectionMode.None,
             // 左右 16 边距不能放这里：Header（入口大卡）在 Margin 内侧会被二次缩进，
             // 大卡/chips 自带 Padding 16，行模板的 row 自带 Margin 16
-            Margin = new Thickness(0, 6, 0, 0),
+            Margin = new Thickness(0),
             RemainingItemsThreshold = 6,
         };
+        // 不透明背景：视觉折叠——本视图可见时完全盖住同层叠放的 tab 内容（根因见 contentGrid 注释）
+        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
         view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.PlaylistRows));
         view.ItemTemplate = new DataTemplate(CreatePlaylistRowTemplate);
@@ -800,8 +677,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         {
             SelectionMode = SelectionMode.Single,
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
-            Margin = new Thickness(0, 6, 0, 0),
+            Margin = new Thickness(0),
         };
+        // 不透明背景：视觉折叠（见 contentGrid 注释）
+        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
         view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
         view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Artists));
         view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateArtistItemTemplate());
@@ -816,9 +695,11 @@ public class NeteaseOnlineMusicPage : ContentPage
         {
             SelectionMode = SelectionMode.Single,
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
-            Margin = new Thickness(0, 6, 0, 0),
+            Margin = new Thickness(0),
             RemainingItemsThreshold = 8,
         };
+        // 不透明背景：视觉折叠（见 contentGrid 注释）
+        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
         view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
         view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
@@ -858,66 +739,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         catch { }
     }
 
-    /// <summary>宽屏（≥900 或横屏）：搜索行合一（入口卡为横滑容器，无需重排）。</summary>
-    private void ApplyWideLayout(double w)
+    /// <summary>顶部 🔍：推入独立搜索页（热词全屏遮罩 + 三类结果，与首页内容不再叠加）。</summary>
+    private async Task OpenSearchPageAsync()
     {
-        // 搜索行：一行两列 [Entry | chips]
-        searchRowGrid.RowDefinitions.Clear();
-        searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        searchRowGrid.ColumnDefinitions.Clear();
-        searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
-        searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetRow(searchBorder, 0);
-        Grid.SetColumn(searchBorder, 0);
-        searchBorder.Margin = new Thickness(16, 0, 8, 0);
-        Grid.SetRow(searchModesScroll, 0);
-        Grid.SetColumn(searchModesScroll, 1);
-        searchModesScroll.Margin = new Thickness(0, 0, 16, 0);
-        searchModesScroll.VerticalOptions = LayoutOptions.Center;
-        searchModesLayout.Padding = new Thickness(0);
-    }
-
-    /// <summary>窄屏（&lt;900 且非横屏）：搜索框在上 chips 在下、列表单列。</summary>
-    private void ApplyNarrowLayout()
-    {
-        // 搜索行：两行 [搜索框 / chips]
-        searchRowGrid.ColumnDefinitions.Clear();
-        searchRowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
-        searchRowGrid.RowDefinitions.Clear();
-        searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        searchRowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        Grid.SetRow(searchBorder, 0);
-        Grid.SetColumn(searchBorder, 0);
-        searchBorder.Margin = new Thickness(16, 0, 16, 4);
-        Grid.SetRow(searchModesScroll, 1);
-        Grid.SetColumn(searchModesScroll, 0);
-        searchModesScroll.Margin = new Thickness(0);
-        searchModesScroll.VerticalOptions = LayoutOptions.Fill;
-        searchModesLayout.Padding = new Thickness(16, 0, 16, 6);
-    }
-
-    /// <summary>
-    /// 顶部 🔍 按钮：展开/收起搜索输入行。展开时聚焦输入框（联想浮层随之挂出）；
-    /// 收起时清空关键词并回到歌单广场上下文（退出搜索结果/榜单浏览态）。
-    /// </summary>
-    private async Task ToggleSearchOpenAsync()
-    {
-        _searchOpen = !_searchOpen;
-        searchRowGrid.IsVisible = _searchOpen;
-        if (_searchOpen)
-        {
-            searchEntry.Focus();
-            return;
-        }
-        try
-        {
-            searchEntry.Unfocus();
-            if (!string.IsNullOrEmpty(_vm.SearchQuery))
-            {
-                _vm.SearchQuery = ""; // 触发 TextChanged 清空联想
-                await _vm.BackToPlaylistsAsync();
-            }
-        }
+        try { await NeteaseNav.PushAsync(new NeteaseSearchPage(_vm, _services)); }
         catch { }
     }
 
