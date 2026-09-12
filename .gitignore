@@ -19,3 +19,15 @@ Thumbs.db
 .claude/
 .cursor/
 .codebuddy/
+
+# ---- AI 工具产物（本地缓存/记忆，不入库） ----
+.codeium/
+.gemini/
+.windsurf/
+.aider*
+.cline*
+.continue/
+.openclaw*
+.autoclaw*
+CLAUDE.md
+CLAUDE.local.md
