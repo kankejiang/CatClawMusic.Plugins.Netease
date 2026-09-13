@@ -18,7 +18,7 @@
     <ProjectReference Include="..\CatClawMusic\CatClawMusic.Data\CatClawMusic.Data.csproj" />
     <!-- 引用 MAUI Controls：插件用 C# 代码构建 UI（不用 XAML，避免跨程序集编译问题）。
          版本与宿主一致（10.0.20），CopyLocalLockFileAssemblies=false 保证不随插件分发。 -->
-    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-rc.1.26451.6" />
     <!-- MVVM Toolkit：插件 ViewModel 使用 ObservableObject/RelayCommand -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
