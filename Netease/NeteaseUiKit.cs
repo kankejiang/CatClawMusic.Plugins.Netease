@@ -16,240 +16,159 @@ namespace CatClawMusic.Plugins.Netease;
 /// </summary>
 public static class NeteaseUiKit
 {
+    /// <summary>
+    /// 插件各页统一底色：与歌单详情页一致的不透明深色。
+    /// 原先各页取宿主的 WindowBackgroundColor，而该资源在宿主启用自定义/封面背景时被置为
+    /// 全透明（alpha=0）→ 插件页面会整页透明、透出下层内容（用户反馈「每日推荐点开后页面是透明的」）。
+    /// </summary>
+    public static readonly Color PageBackground = Color.FromArgb("#15151A");
+
     // ── 歌曲行模板 ──
 
-    /// <summary>歌曲行模板的可选项（红心/垃圾桶按钮与可见性绑定）</summary>
+    /// <summary>歌曲行模板的可选项</summary>
     public class SongRowOptions
     {
-        /// <summary>红心按钮 Command（绑定到 OnlineSong 上下文，参数即歌曲本身）</summary>
-        public System.Windows.Input.ICommand? HeartCommand { get; set; }
-        /// <summary>红心按钮可见性绑定源（如 ViewModel）与属性名（如 IsLoggedIn）</summary>
-        public object? HeartVisibleSource { get; set; }
-        public string? HeartVisibleProperty { get; set; }
+        /// <summary>「⋮」菜单命令（绑定到 OnlineSong 上下文，参数即歌曲本身）；
+        /// 通常传 ViewModel.SongMenuCommand，为空则不显示「⋮」</summary>
+        public System.Windows.Input.ICommand? MenuCommand { get; set; }
 
-        /// <summary>垃圾桶 Command（FM 模式用）</summary>
-        public System.Windows.Input.ICommand? TrashCommand { get; set; }
-        /// <summary>垃圾桶可见性绑定源与属性名（如 IsFmMode）</summary>
-        public object? TrashVisibleSource { get; set; }
-        public string? TrashVisibleProperty { get; set; }
-
-        /// <summary>相似歌曲 Command（参数即歌曲本身）</summary>
-        public System.Windows.Input.ICommand? SimilarCommand { get; set; }
-
-        /// <summary>MV 按钮 Command（仅歌曲有 MV 时可见）</summary>
-        public System.Windows.Input.ICommand? MvCommand { get; set; }
-
-        /// <summary>评论按钮 Command（参数即歌曲本身，打开评论区）</summary>
-        public System.Windows.Input.ICommand? CommentCommand { get; set; }
+        /// <summary>行点击播放命令（绑定到 OnlineSong；只挂在封面/文字上，⋮ 不触发）</summary>
+        public System.Windows.Input.ICommand? PlayCommand { get; set; }
     }
 
     /// <summary>
-    /// 歌曲行：封面 40 + 标题/艺术家 + （可选）VIP 角标 + 红心/垃圾桶操作列。
-    /// VIP/下架歌曲整行降透明度提示；红心图标按 Internal["Liked"] 渲染。
+    /// 歌曲行：封面 44 + 标题/艺术家 + 「⋮」菜单 —— 全插件统一使用**歌单详情页**的行样式。
+    /// 原实现是两套：日推/广场/搜索用 40dp 封面 + VIP 角标 + 红心/垃圾桶/相似/MV/评论 内联字形，
+    /// 歌单详情页则自带一套 44dp + 单「⋮」。现统一为歌单页样式，内联操作收进「⋮」菜单
+    /// （见 <see cref="NeteaseSongMenu"/>），各列表观感与操作入口一致。
     /// </summary>
     public static View CreateSongItemTemplate(SongRowOptions? options = null)
     {
         var coverBorder = new Border
         {
-            WidthRequest = 40,
-            HeightRequest = 40,
-            StrokeShape = new RoundRectangle { CornerRadius = 8 },
+            WidthRequest = 44,
+            HeightRequest = 44,
+            StrokeShape = new RoundRectangle { CornerRadius = 6 },
             StrokeThickness = 0,
         };
-        coverBorder.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
-        var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 40, HeightRequest = 40 };
-        // converterParameter=200：40px 显示位裁剪 ?param=200y200 缩略图——
-        // 不传参数会下载/解码数据层的 1000px 原图（列表滚动持续大图解码，明显掉帧）
-        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl), converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 200) { TargetNullValue = "ic_music_note" });
+        var coverImage = new Image { Aspect = Aspect.AspectFill, WidthRequest = 44, HeightRequest = 44 };
+        // converterParameter=150：44dp 显示位裁剪 ?param=150y150 缩略图（3x 屏 ≈132px），避免解码原图
+        coverImage.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl),
+            converter: OnlineUrlToStreamImageConverter.Instance, converterParameter: 150)
+        { TargetNullValue = "ic_music_note" });
         coverBorder.Content = coverImage;
 
-        var titleLabel = new Label { FontSize = 14, FontFamily = "OpenSansSemibold", MaxLines = 1 };
-        titleLabel.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
-        titleLabel.SetBinding(Label.TextProperty, nameof(OnlineSong.Title));
-
-        // VIP 角标（fee=1/4 时显示）
-        var vipBadge = new Label
+        var title = new Label
         {
-            Text = "VIP",
-            FontSize = 8,
-            FontFamily = "OpenSansSemibold",
-            TextColor = Colors.White,
-            BackgroundColor = Color.FromArgb("#FF5E62"),
-            Padding = new Thickness(3, 1),
-            VerticalOptions = LayoutOptions.Center,
-            Margin = new Thickness(4, 0, 0, 0),
+            FontSize = 14,
+            TextColor = Color.FromArgb("#F2FFFFFF"),
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
         };
-        vipBadge.SetBinding(VisualElement.IsVisibleProperty,
-            new Binding(nameof(OnlineSong.Internal), converter: VipBadgeVisibleConverter.Instance));
-        var vipFrame = new Border
-        {
-            StrokeThickness = 0,
-            StrokeShape = new RoundRectangle { CornerRadius = 3 },
-            Padding = 0,
-            Content = vipBadge,
-            VerticalOptions = LayoutOptions.Center,
-        };
-        vipFrame.SetBinding(VisualElement.IsVisibleProperty,
-            new Binding(nameof(OnlineSong.Internal), converter: VipBadgeVisibleConverter.Instance));
+        title.SetBinding(Label.TextProperty, nameof(OnlineSong.Title));
 
-        var artistLabel = new Label { FontSize = 11, MaxLines = 1 };
-        artistLabel.SetDynamicResource(Label.TextColorProperty, "TextSecondaryColor");
-        artistLabel.SetBinding(Label.TextProperty, nameof(OnlineSong.Artist));
-
-        var titleRow = new HorizontalStackLayout
+        var artist = new Label
         {
-            Spacing = 0,
-            Children = { titleLabel, vipFrame },
+            FontSize = 11,
+            TextColor = Color.FromArgb("#99FFFFFF"),
+            MaxLines = 1,
+            LineBreakMode = LineBreakMode.TailTruncation,
+            Margin = new Thickness(0, 2, 0, 0),
         };
-        // HorizontalStackLayout 不会自动撑满，标题过长时让 VIP 角标紧随文本后
+        artist.SetBinding(Label.TextProperty, nameof(OnlineSong.Artist));
+
         var textLayout = new VerticalStackLayout
         {
-            Spacing = 2,
+            Spacing = 0,
             VerticalOptions = LayoutOptions.Center,
             HorizontalOptions = LayoutOptions.Fill,
-            Children = { titleRow, artistLabel },
+            Children = { title, artist },
         };
 
-        var columns = new ColumnDefinitionCollection
+        // 行点击播放：只挂在封面与文字上（⋮ 独立，不冒泡）——列表 SelectionMode 已关，
+        // 避免"点 ⋮ 先选中该行 → 误播放"。
+        if (options?.PlayCommand != null)
         {
-            new() { Width = GridLength.Auto },
-            new() { Width = GridLength.Star },
+            void AttachPlay(View v)
+            {
+                var tap = new TapGestureRecognizer();
+                tap.SetBinding(TapGestureRecognizer.CommandProperty, new Binding(".", source: options.PlayCommand));
+                tap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+                v.GestureRecognizers.Add(tap);
+            }
+            AttachPlay(coverBorder);
+            AttachPlay(textLayout);
+        }
+
+        var more = new Label
+        {
+            Text = "⋮",
+            TextColor = Color.FromArgb("#E6FFFFFF"),
+            FontSize = 18,
+            HorizontalOptions = LayoutOptions.Center,
+            VerticalOptions = LayoutOptions.Center,
+            Padding = new Thickness(6, 0),
         };
-        var children = new List<View> { coverBorder, textLayout };
-        Grid.SetColumn(textLayout, 1);
-
-        // 操作列：红心 + 垃圾桶（各自按需可见）
-        var actionLayout = new HorizontalStackLayout { Spacing = 10, VerticalOptions = LayoutOptions.Center };
-        bool hasAction = false;
-
-        if (options?.HeartCommand != null)
+        if (options?.MenuCommand != null)
         {
-            var heart = new Label
-            {
-                FontSize = 16,
-                VerticalOptions = LayoutOptions.Center,
-                Padding = new Thickness(4),
-            };
-            heart.SetBinding(Label.TextProperty,
-                new Binding(nameof(OnlineSong.Internal), converter: LikedIconConverter.Instance));
-            var heartTap = new TapGestureRecognizer();
-            heartTap.SetBinding(TapGestureRecognizer.CommandProperty,
-                new Binding(".", source: options.HeartCommand));
-            heartTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
-            heart.GestureRecognizers.Add(heartTap);
-            if (options.HeartVisibleSource != null && options.HeartVisibleProperty != null)
-                heart.SetBinding(VisualElement.IsVisibleProperty,
-                    new Binding(options.HeartVisibleProperty, source: options.HeartVisibleSource));
-            actionLayout.Children.Add(heart);
-            hasAction = true;
-        }
-
-        if (options?.TrashCommand != null)
-        {
-            var trash = new Label
-            {
-                Text = "🗑",
-                FontSize = 15,
-                VerticalOptions = LayoutOptions.Center,
-                Padding = new Thickness(4),
-            };
-            var trashTap = new TapGestureRecognizer();
-            trashTap.SetBinding(TapGestureRecognizer.CommandProperty,
-                new Binding(".", source: options.TrashCommand));
-            trashTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
-            trash.GestureRecognizers.Add(trashTap);
-            if (options.TrashVisibleSource != null && options.TrashVisibleProperty != null)
-                trash.SetBinding(VisualElement.IsVisibleProperty,
-                    new Binding(options.TrashVisibleProperty, source: options.TrashVisibleSource));
-            actionLayout.Children.Add(trash);
-            hasAction = true;
-        }
-
-        if (options?.SimilarCommand != null)
-        {
-            var similar = new Label
-            {
-                Text = "🎼",
-                FontSize = 15,
-                VerticalOptions = LayoutOptions.Center,
-                Padding = new Thickness(4),
-            };
-            var similarTap = new TapGestureRecognizer();
-            similarTap.SetBinding(TapGestureRecognizer.CommandProperty,
-                new Binding(".", source: options.SimilarCommand));
-            similarTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
-            similar.GestureRecognizers.Add(similarTap);
-            actionLayout.Children.Add(similar);
-            hasAction = true;
-        }
-
-        if (options?.MvCommand != null)
-        {
-            var mv = new Label
-            {
-                Text = "🎬",
-                FontSize = 15,
-                VerticalOptions = LayoutOptions.Center,
-                Padding = new Thickness(4),
-            };
-            mv.SetBinding(VisualElement.IsVisibleProperty,
-                new Binding(nameof(OnlineSong.Internal), converter: MvVisibleConverter.Instance));
-            var mvTap = new TapGestureRecognizer();
-            mvTap.SetBinding(TapGestureRecognizer.CommandProperty,
-                new Binding(".", source: options.MvCommand));
-            mvTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
-            mv.GestureRecognizers.Add(mvTap);
-            actionLayout.Children.Add(mv);
-            hasAction = true;
-        }
-
-        if (options?.CommentCommand != null)
-        {
-            var comment = new Label
-            {
-                Text = "💬",
-                FontSize = 15,
-                VerticalOptions = LayoutOptions.Center,
-                Padding = new Thickness(4),
-            };
-            var commentTap = new TapGestureRecognizer();
-            commentTap.SetBinding(TapGestureRecognizer.CommandProperty,
-                new Binding(".", source: options.CommentCommand));
-            commentTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
-            comment.GestureRecognizers.Add(commentTap);
-            actionLayout.Children.Add(comment);
-            hasAction = true;
-        }
-
-        Grid grid;
-        if (hasAction)
-        {
-            columns.Add(new ColumnDefinition { Width = GridLength.Auto });
-            children.Add(actionLayout);
-            Grid.SetColumn(actionLayout, 2);
-            grid = new Grid
-            {
-                Padding = new Thickness(14, 8),
-                ColumnDefinitions = columns,
-                ColumnSpacing = 12,
-            };
+            var moreTap = new TapGestureRecognizer();
+            moreTap.SetBinding(TapGestureRecognizer.CommandProperty, new Binding(".", source: options.MenuCommand));
+            moreTap.SetBinding(TapGestureRecognizer.CommandParameterProperty, new Binding("."));
+            more.GestureRecognizers.Add(moreTap);
         }
         else
         {
-            grid = new Grid
-            {
-                Padding = new Thickness(14, 8),
-                ColumnDefinitions = columns,
-                ColumnSpacing = 12,
-            };
+            more.IsVisible = false;
         }
-        foreach (var c in children) grid.Children.Add(c);
 
-        // VIP/下架歌曲整行降透明度
-        grid.SetBinding(VisualElement.OpacityProperty,
-            new Binding(nameof(OnlineSong.Internal), converter: VipOpacityConverter.Instance));
+        var grid = new Grid
+        {
+            Padding = new Thickness(16, 6),
+            ColumnDefinitions = new ColumnDefinitionCollection
+            {
+                new() { Width = GridLength.Auto },
+                new() { Width = GridLength.Star },
+                new() { Width = GridLength.Auto },
+            },
+            ColumnSpacing = 12,
+        };
+        grid.Children.Add(coverBorder);
+        Grid.SetColumn(textLayout, 1);
+        grid.Children.Add(textLayout);
+        Grid.SetColumn(more, 2);
+        grid.Children.Add(more);
         return grid;
     }
+    /// <summary>当前是否已红心：直读 <c>OnlineSong.Internal["Liked"]</c>（与行内红心图标同一数据源），
+    /// 供「⋮」菜单显示「红心 / 取消红心」——不要把状态写死在文案里。</summary>
+    public static bool SongIsLiked(OnlineSong song)
+        => song.Internal is Dictionary<string, object> d && d.TryGetValue("Liked", out var v) && v is true;
+
+    /// <summary>行内「⋮」等按钮被点击时抑制"行选中即播放"（这些列表播放走 SelectionChanged，
+    /// 点按钮会先选中该行 → 误播放；与 ViewModel.ArmSuppressSelection 同一语义的静态版，
+    /// 供没有插件主 VM 的专辑/歌手/歌单详情页使用）。</summary>
+    private static DateTime _rowSelectSuppressUntil = DateTime.MinValue;
+
+    /// <summary>抑制 600ms 内的行选中播放</summary>
+    public static void ArmRowSelectSuppress() => _rowSelectSuppressUntil = DateTime.UtcNow.AddMilliseconds(600);
+
+    /// <summary>消费一次抑制标记（返回 true 表示本次选中应被忽略）</summary>
+    public static bool ConsumeRowSelectSuppress()
+    {
+        if (DateTime.UtcNow > _rowSelectSuppressUntil) return false;
+        _rowSelectSuppressUntil = DateTime.MinValue;
+        return true;
+    }    /// <summary>该歌曲是否有 MV（与行内 MV 入口同一判据；供「⋮」菜单决定是否列出「观看 MV」）</summary>
+    public static bool SongHasMv(OnlineSong song)
+    {
+        try
+        {
+            return MvVisibleConverter.Instance.Convert(
+                song.Internal, typeof(bool), null!, System.Globalization.CultureInfo.CurrentCulture) is true;
+        }
+        catch { return false; }
+    }
+
 
     // ── 歌单卡片模板 ──
 
@@ -872,9 +791,9 @@ public static class NeteaseUiKit
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 8 },
             Padding = new Thickness(5, 1),
-            HorizontalOptions = LayoutOptions.Start,
+            HorizontalOptions = LayoutOptions.End,   // 官方版式：角标在封面右上角
             VerticalOptions = LayoutOptions.Start,
-            Margin = new Thickness(6, 5, 0, 0),
+            Margin = new Thickness(0, 5, 6, 0),
             Content = new HorizontalStackLayout { Spacing = 2, Children = { new Label { Text = "▶", FontSize = 8, TextColor = Colors.White, VerticalOptions = LayoutOptions.Center }, countLabel } },
         };
         countPill.SetBinding(VisualElement.IsVisibleProperty, new Binding(nameof(NeteasePlaylist.PlayCount),
@@ -885,7 +804,9 @@ public static class NeteaseUiKit
         var nameLabel = new Label
         {
             FontSize = 10.5f,
-            LineHeight = 14,
+            // ⚠ LineHeight 是**倍数**不是像素：原先写 14 会让每行约 147px 高，
+            // 配合 HeightRequest=34 把文字整个裁到可视区外 → 卡片一直没有标题（官方版式是有标题的）
+            LineHeight = 1.35,
             MaxLines = 2,
             LineBreakMode = LineBreakMode.TailTruncation,
             Padding = new Thickness(2, 5, 2, 0),
@@ -914,7 +835,9 @@ public static class NeteaseUiKit
     }
 
     /// <summary>榜单色块卡（横滑直达榜单；渐变按索引取固定色板，Binding 歌单名）。</summary>
-    public static View CreateToplistColorCard(int index, ICommand? tapCommand = null)
+    /// <param name="width">卡片宽（默认 118 用于横滑；全量铺满网格时传更宽的值）</param>
+    /// <param name="height">卡片高；留空 = 正方形（官方铺满网格用的是**扁卡**，宽高比约 2:1）</param>
+    public static View CreateToplistColorCard(int index, ICommand? tapCommand = null, double width = 118, double? height = null)
     {
         (string C1, string C2)[] palette =
         {
@@ -922,10 +845,11 @@ public static class NeteaseUiKit
             ("#8C9EFF", "#5348D4"), ("#B39DDB", "#5B46C9"), ("#82B1FF", "#3F51B5"),
         };
         var (c1, c2) = palette[index % palette.Length];
+        var h = height ?? width;
         var card = new Border
         {
-            WidthRequest = 118,
-            HeightRequest = 118,
+            WidthRequest = width,
+            HeightRequest = h,
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 12 },
             Background = new LinearGradientBrush
@@ -940,7 +864,7 @@ public static class NeteaseUiKit
             },
             Content = new Label
             {
-                FontSize = 14.5f,
+                FontSize = width >= 150 ? 16f : 14.5f,
                 FontFamily = "OpenSansSemibold",
                 TextColor = Colors.White,
                 HorizontalTextAlignment = TextAlignment.Center,

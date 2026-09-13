@@ -39,7 +39,6 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     private int _searchPage = 1;
     private string _lastQuery = "";
     private bool _isLoadingMore;
-    private bool _browsingToplists;
 
     // ── 相似歌单（当前浏览的歌单 → 相关歌单）──
     private string? _currentPlaylistId;
@@ -183,17 +182,62 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     [ObservableProperty]
     private bool _showCategories = true;
 
-    /// <summary>歌单分类 chips（启动为硬编码兜底，分类接口返回后替换）</summary>
+    /// <summary>歌单分类 chips（启动为硬编码兜底，分类接口返回后替换）。首个「推荐」即官方的推荐流</summary>
     public ObservableCollection<CategoryChipItem> Categories { get; } = new()
     {
-        new("全部", true), new("华语", false), new("欧美", false), new("日韩", false),
-        new("流行", false), new("摇滚", false), new("民谣", false), new("电子", false),
-        new("轻音乐", false), new("ACG", false), new("怀旧", false), new("治愈", false),
-        new("运动", false), new("夜晚", false),
+        new("推荐", true), new("官方", false), new("华语", false), new("欧美", false), new("流行", false),
+        new("摇滚", false), new("民谣", false), new("电子", false), new("轻音乐", false), new("ACG", false),
+        new("怀旧", false), new("治愈", false), new("运动", false), new("夜晚", false),
     };
 
+    /// <summary>官方版式的常用分类（其余分类收进「更多分类 ▾」面板）</summary>
+    private static readonly string[] PrimaryCategoryNames = { "推荐", "官方", "华语", "摇滚", "民谣", "电子", "轻音乐" };
+
+    /// <summary>「更多分类」入口 chip 名（不是真实分类，点了展开分组面板）</summary>
+    public const string MoreCategoriesChip = "更多分类 ▾";
+
+    // ── 「更多分类」展开面板（官方同款：分组 tab + 组内分类 chips）──
+
+    /// <summary>是否展开「更多分类」面板</summary>
     [ObservableProperty]
-    private string _selectedCategory = "全部";
+    private bool _moreCategoriesExpanded;
+
+    /// <summary>面板里的分组 tab（语种/风格/场景/情感/主题）</summary>
+    public ObservableCollection<string> CategoryGroupNames { get; } = new();
+
+    /// <summary>当前分组（选中态高亮 + 下划线）</summary>
+    [ObservableProperty]
+    private string _selectedGroup = "";
+
+    /// <summary>当前分组下的分类 chips</summary>
+    public ObservableCollection<CategoryChipItem> ActiveGroupCategories { get; } = new();
+
+    /// <summary>切换分组：刷新该组的分类 chips（页面分组 tab 调用）</summary>
+    public void SelectCategoryGroup(string group)
+    {
+        if (string.IsNullOrWhiteSpace(group)) return;
+        SelectedGroup = group;
+        var g = _categoryGroups.FirstOrDefault(x => x.Group == group);
+        ActiveGroupCategories.Clear();
+        if (g.Names == null) return;
+        foreach (var n in g.Names)
+            ActiveGroupCategories.Add(new CategoryChipItem(n, n == SelectedCategory));
+    }
+
+    /// <summary>广场 chips 实际显示的分类（常用若干 + 更多分类入口），绑到页面 chips 行</summary>
+    public ObservableCollection<CategoryChipItem> VisibleCategories { get; } = new();
+
+    /// <summary>按官方版式重建 chips 行（常用分类 + 「更多分类 ▾」）</summary>
+    private void RebuildVisibleCategories()
+    {
+        VisibleCategories.Clear();
+        foreach (var name in PrimaryCategoryNames)
+            VisibleCategories.Add(new CategoryChipItem(name, name == SelectedCategory));
+        VisibleCategories.Add(new CategoryChipItem(MoreCategoriesChip, false));
+    }
+
+    [ObservableProperty]
+    private string _selectedCategory = "推荐";
 
     /// <summary>歌单列表</summary>
     public ObservableCollection<OnlinePlaylist> Playlists { get; } = new();
@@ -304,22 +348,82 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         ShowSquare = value == 1;
         ShowToplists = value == 2;
         ShowArtistTab = value == 3;
+        // SwitchToSquareView 会在切 tab 的同时自行装填数据，避免这里再触发一次默认加载
+        // （否则 Playlists 刚被清空 → 命中 case 1 → LoadPlaylistsAsync 把榜单/我的歌单覆盖掉）
+        if (_suppressTabAutoLoad) return;
         switch (value)
         {
             case 0 when FeaturedPlaylists.Count == 0: _ = LoadFeaturedAsync(); break;
-            case 1 when Playlists.Count == 0: _ = LoadPlaylistsAsync(); break;
+            // 广场 tab：承载"我的歌单/推荐歌单"时，切回来要恢复广场歌单（否则残留上一次的内容）
+            case 1 when _squareContent != SquareContent.Square || Playlists.Count == 0: _ = LoadPlaylistsAsync(); break;
             case 2 when ToplistBlocks.Count == 0: _ = LoadToplistTabAsync(); break;
             case 3 when TabArtistRows.Count == 0: _ = ResetTabArtistsAsync(); break;
         }
     }
 
-    /// <summary>tab 切换（页面 tab 栏调用）</summary>
+    /// <summary>切入「歌单广场」时抑制 tab 默认加载（见 OnSelectedTabIndexChanged）</summary>
+    private bool _suppressTabAutoLoad;
+
+    /// <summary>
+    /// 把视图切到「歌单广场」那一层。精选页的「我的歌单 / 推荐歌单」入口卡复用的就是广场页的
+    /// 歌单列表容器（<c>_squareHost</c> 可见性绑 ShowSquare），必须切 tab 才能看见。
+    /// 历史 Bug：这些方法只装了 Playlists 却没切 tab，于是列表在隐藏容器里 → 点击"没反应"。
+    /// </summary>
+    private void SwitchToSquareView()
+    {
+        _suppressTabAutoLoad = true;
+        try
+        {
+            if (SelectedTabIndex == 1)
+            {
+                // 已在广场 tab：SetProperty 不会触发变更通知，手动同步这几个顶层标志
+                ShowFeatured = false;
+                ShowSquare = true;
+                ShowToplists = false;
+                ShowArtistTab = false;
+            }
+            else
+            {
+                SelectedTabIndex = 1;   // 触发 OnSelectedTabIndexChanged 设置上面四个标志 + tab 高亮
+            }
+        }
+        finally { _suppressTabAutoLoad = false; }
+
+        // 这两个入口都不是"歌曲列表"形态，顺带关掉同层叠放的歌曲/歌手视图
+        ShowSongs = false;
+        ShowArtists = false;
+    }
+
+    /// <summary>「歌单广场」tab 当前承载的内容（该 tab 会临时承载"我的歌单/推荐歌单"）</summary>
+    private enum SquareContent { Square, MyPlaylists, RecommendPlaylists }
+
+    /// <summary>广场 tab 当前承载的内容；非 Square 时再切到广场要重新拉广场歌单</summary>
+    private SquareContent _squareContent = SquareContent.Square;
+
+    /// <summary>
+    /// tab 点击入口（页面 tab 栏调用）。
+    /// 同一 tab 重复点击时若其承载的不是默认内容，则恢复默认内容 —— 例：从"我的歌单"卡片切到广场后，
+    /// 再点「歌单广场」应看到广场歌单，而不是我的歌单/榜单（用户反馈"歌单广场怎么是排行榜"）。
+    /// </summary>
+    public void SelectTab(int index)
+    {
+        if (index == SelectedTabIndex)
+        {
+            if (index == 1 && _squareContent != SquareContent.Square) _ = LoadPlaylistsAsync();
+            return;
+        }
+        SelectedTabIndex = index;
+    }
+
+    /// <summary>tab 切换（页面 tab 栏调用）。同步执行：切 tab 会立刻刷新 tab 样式，
+    /// 放到 Task.Run 里会在线程池线程触发 UI 更新而闪退（见 LoadToplistsAsync 注释）。</summary>
     [RelayCommand]
-    public Task SelectTabAsync(object? tab) => Task.Run(() =>
+    public Task SelectTabAsync(object? tab)
     {
         var idx = tab is int i ? i : HomeTabs.IndexOf(tab as string ?? "");
-        if (idx >= 0) SelectedTabIndex = idx;
-    });
+        if (idx >= 0) SelectTab(idx);
+        return Task.CompletedTask;
+    }
 
     // ── 精选 tab：入口卡沿用页面内置；三排角标歌单（推荐歌单/音乐新发现/你可能喜欢）──
 
@@ -353,10 +457,16 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         {
             // 取数段全部在后台执行（Task.Run 内 await 不回 UI 线程），解析/映射不再占主线程
             var p = _featuredBasePage + 1;
-            var t1 = Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p));
+            // 「推荐歌单」必须用**每日个性化推荐** /api/personalized/playlist（登录后按口味每天更新）；
+            // 原实现用的是分类广场 /api/top/playlist（按热度排序的广场列表，属热门榜性质），
+            // 所以每天看到的是同一批 —— 用户反馈"推荐歌单每天都一样"。
+            var t1 = Task.Run(() => _plugin.GetRecommendPlaylistsAsync());
             var t2 = Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p + 1));
             var t3 = Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p + 2));
-            SetCollection(FeaturedPlaylists, await t1);
+            var daily = await t1;
+            // 匿名单下每日推荐可能为空 → 回退广场推荐流，保证这一排不空
+            SetCollection(FeaturedPlaylists,
+                daily.Count > 0 ? daily : await Task.Run(() => _plugin.GetPlaylistsPageAsync(null, p)));
             SetCollection(DiscoveryPlaylists, await t2);
             SetCollection(DailyPlaylists, await t3);
         }
@@ -376,6 +486,67 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public ObservableCollection<OnlinePlaylist> ToplistColors { get; } = new();
     public ObservableCollection<ToplistBlock> ToplistBlocks { get; } = new();
 
+    // ── 排行榜 tab：全量榜单卡片「折行铺满」（官方版式）──
+    // 不用 GridItemsLayout.Span：插件里已记过 WinUI 上的坑（集合重建后按整窗宽测量、单张占满一行），
+    // 统一复用歌单广场/歌手的「分块行」方案：外层 CollectionView 虚拟化行，行内水平排 N 张定宽卡。
+
+    /// <summary>目标卡宽（用于推导列数；实际卡宽由可用宽度均分得出，保证整行铺满不溢出）</summary>
+    private const double ToplistTargetCardWidth = 206;
+
+    /// <summary>当前榜单卡边长（正方形，由 <see cref="SetToplistGridWidth"/> 按可用宽度均分算出）</summary>
+    public double ToplistCardWidth { get; private set; } = ToplistTargetCardWidth;
+    public double ToplistCardHeight { get; private set; } = ToplistTargetCardWidth;
+
+    /// <summary>卡片间距</summary>
+    public const double ToplistCardSpacing = 20;
+
+    /// <summary>榜单卡片折行（一行一 PlaylistGridRow）</summary>
+    public ObservableCollection<PlaylistGridRow> ToplistCardRows { get; } = new();
+
+    private List<OnlinePlaylist> _allToplists = new();
+    private int _toplistGridSpan = 5;
+
+    /// <summary>
+    /// 按可用宽度推导列数并**均分铺满整行**（页面挂在榜单 CollectionView 的 SizeChanged 上）。
+    /// <para>
+    /// 关键：卡宽不再是固定 206，而是 (可用宽度 - 间距) / 列数 —— 否则窄屏（手机竖屏）放不下
+    /// 固定宽卡片会被右边缘裁掉（实测手机端第 2 张卡被裁）。列数下限也从 3 放宽到 2。
+    /// </para>
+    /// </summary>
+    public void SetToplistGridWidth(double availableWidth)
+    {
+        if (availableWidth <= 0) return;
+        var span = (int)Math.Floor((availableWidth + ToplistCardSpacing) / (ToplistTargetCardWidth + ToplistCardSpacing));
+        span = Math.Clamp(span, 2, 7);
+
+        var cardWidth = Math.Floor((availableWidth - ToplistCardSpacing * (span - 1)) / span);
+        if (cardWidth < 72) cardWidth = 72;   // 极窄兜底，避免负/零尺寸
+
+        // 列数或卡宽任一变化都要重排（卡宽变了但列数没变时同样需要重建行）
+        if (span == _toplistGridSpan && Math.Abs(cardWidth - ToplistCardWidth) < 0.5 && ToplistCardRows.Count > 0)
+            return;
+
+        _toplistGridSpan = span;
+        ToplistCardWidth = cardWidth;
+        ToplistCardHeight = cardWidth;        // 正方形
+        RechunkToplists();
+    }
+
+    private void RechunkToplists()
+    {
+        ToplistCardRows.Clear();
+        PlaylistGridRow? row = null;
+        foreach (var pl in _allToplists)
+        {
+            if (row == null || row.Items.Count >= _toplistGridSpan)
+            {
+                row = new PlaylistGridRow();
+                ToplistCardRows.Add(row);
+            }
+            row.Items.Add(pl);
+        }
+    }
+
     [RelayCommand]
     public async Task LoadToplistTabAsync()
     {
@@ -385,6 +556,9 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             // 全量榜单取回内存池（client 有当天磁盘缓存，跨启动秒开），UI 只分批显示
             var blocks = await Task.Run(() => _plugin.ApiClient.GetToplistBlocksAsync());
             _allToplistBlocks = blocks ?? new List<ToplistBlock>();
+            // 全量榜单卡片：同一份数据（一次请求拿全）折行铺满，不再依赖 Top3 块列表
+            _allToplists = _allToplistBlocks.Select(b => (OnlinePlaylist)b.Playlist).ToList();
+            RechunkToplists();
             _toplistShown = 0;
             ToplistBlocks.Clear();
             ToplistColors.Clear();
@@ -647,7 +821,9 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         _queue = queue;
         _audioPlayer = audioPlayer;
         _services = services;
+        SongMenuCommand = new Command<OnlineSong>(async s => await ShowSongMenuAsync(s));
         Songs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPlaylistSongs));
+        RebuildVisibleCategories();   // 初始 chips（常用分类 + 更多分类入口）
         // 歌单分块网格投影：分页 Add 增量入块（保留滚动位置），重置/移除则整体重新分块
         Playlists.CollectionChanged += (_, e) =>
         {
@@ -689,16 +865,43 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     // ── 分类 ──
 
-    /// <summary>拉取官方歌单分类替换硬编码列表（失败保持现状）</summary>
+    /// <summary>官方分类分组（语种/风格/场景/情感/主题 → 组内分类），供「更多分类」两步选择</summary>
+    private List<(string Group, List<string> Names)> _categoryGroups = new();
+
+    /// <summary>拉取官方歌单分类（含分组）替换硬编码列表（失败保持现状）</summary>
     private async Task LoadCategoriesAsync()
     {
         try
         {
-            var cats = await _plugin.GetCategoriesAsync();
-            if (cats == null || cats.Count <= 1) return;
+            // 分组接口同时也带全部子分类，一次请求即可（不再单独调扁平接口）
+            var groups = await _plugin.ApiClient.GetPlaylistCategoryGroupsAsync();
+            if (groups == null || groups.Count == 0)
+            {
+                var cats = await _plugin.GetCategoriesAsync();
+                if (cats == null || cats.Count <= 1) return;
+                Categories.Clear();
+                Categories.Add(new CategoryChipItem("推荐", SelectedCategory == "推荐"));
+                foreach (var name in cats)
+                    if (name != "推荐" && name != MoreCategoriesChip)
+                        Categories.Add(new CategoryChipItem(name, name == SelectedCategory));
+                RebuildVisibleCategories();
+                return;
+            }
+
+            _categoryGroups = groups;
             Categories.Clear();
-            foreach (var name in cats)
-                Categories.Add(new CategoryChipItem(name, name == SelectedCategory));
+            // 「推荐」是官方推荐流的入口（接口 catlist 里不一定有），手工保证它在列表首位
+            Categories.Add(new CategoryChipItem("推荐", SelectedCategory == "推荐"));
+            foreach (var g in groups)
+                foreach (var name in g.Names)
+                    if (name != "推荐" && name != MoreCategoriesChip && Categories.All(c => c.Name != name))
+                        Categories.Add(new CategoryChipItem(name, name == SelectedCategory));
+            RebuildVisibleCategories();
+            // 「更多分类」面板：分组 tab + 默认展开第一组（官方进入即显示第一组分类）
+            CategoryGroupNames.Clear();
+            foreach (var g in groups) CategoryGroupNames.Add(g.Group);
+            SelectCategoryGroup(CategoryGroupNames.Count > 0 ? CategoryGroupNames[0] : "");
+            NeteaseLoginLog.Write($"歌单分类已加载：{groups.Count} 组 / {Categories.Count - 1} 个分类（{string.Join("/", groups.Select(g => g.Group))}）");
         }
         catch { }
     }
@@ -706,9 +909,23 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     [RelayCommand]
     public async Task SelectCategoryAsync(string? category)
     {
-        if (string.IsNullOrWhiteSpace(category) || category == SelectedCategory) return;
+        if (string.IsNullOrWhiteSpace(category)) return;
+
+        // 「更多分类 ▾」是入口不是分类：官方为**页内展开面板**（分组 tab + 组内 chips），
+        // 这里只切换展开状态；分组/分类的选取由页面面板交互触发。
+        if (category == MoreCategoriesChip)
+        {
+            MoreCategoriesExpanded = !MoreCategoriesExpanded;
+            if (MoreCategoriesExpanded && ActiveGroupCategories.Count == 0 && CategoryGroupNames.Count > 0)
+                SelectCategoryGroup(CategoryGroupNames[0]);
+            return;
+        }
+
+        if (category == SelectedCategory) { RebuildVisibleCategories(); return; }
+
         SelectedCategory = category;
         foreach (var c in Categories) c.IsSelected = c.Name == category;
+        RebuildVisibleCategories();
         await LoadPlaylistsAsync();
     }
 
@@ -716,13 +933,15 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public async Task LoadPlaylistsAsync()
     {
         _context = BrowseContext.Square;
+        _squareContent = SquareContent.Square;   // 广场 tab 恢复为默认内容
         _playlistPage = 1;
         IsLoading = true;
         PlaylistStatus = "正在加载歌单...";
         Playlists.Clear();
         try
         {
-            var category = SelectedCategory == "全部" ? null : SelectedCategory;
+            // 「推荐」= 官方推荐流（接口用不带 cat 的 /api/top/playlist），其余分类按名传 cat
+            var category = SelectedCategory is "推荐" or "全部" ? null : SelectedCategory;
             var pls = await Task.Run(() => _plugin.GetPlaylistsPageAsync(category, 1));
             foreach (var pl in pls ?? new List<OnlinePlaylist>())
                 Playlists.Add(pl);
@@ -756,7 +975,8 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             {
                 case BrowseContext.Square when ShowPlaylists:
                 {
-                    var category = SelectedCategory == "全部" ? null : SelectedCategory;
+                    // 「推荐」= 官方推荐流（接口用不带 cat 的 /api/top/playlist），其余分类按名传 cat
+            var category = SelectedCategory is "推荐" or "全部" ? null : SelectedCategory;
                     var next = await Task.Run(() => _plugin.GetPlaylistsPageAsync(category, _playlistPage + 1));
                     if (next != null && next.Count > 0)
                     {
@@ -825,47 +1045,31 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         }
     }
 
+    /// <summary>歌曲列表的「返回上一级」：关掉歌曲/歌手/相似视图，露出所在 tab 的列表内容</summary>
     [RelayCommand]
-    public async Task BackToPlaylistsAsync()
+    public Task BackToPlaylistsAsync()
     {
         ShowSongs = false;
         ShowArtists = false;
         ShowPlaylists = true;
         ShowSimilarPlaylists = false;
-        if (_browsingToplists)
-        {
-            _browsingToplists = false;
-            await LoadPlaylistsAsync();
-        }
+        return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 排行榜卡片：切到「排行榜」tab（官方榜块带更新频率与前三首预览，比纯列表更完整）。
+    /// 不再借用「歌单广场」tab —— 那会让广场里残留榜单（用户反馈"歌单广场怎么是排行榜"）。
+    /// <para>
+    /// ⚠ 必须在 UI 线程同步设置：OnSelectedTabIndexChanged → 页面的 PropertyChanged 订阅会立刻
+    /// 刷新 tab 样式（新建 SolidColorBrush）。曾用 Task.Run 包过，属性变更跑到线程池线程上，
+    /// WinRT 在非 UI 线程建画刷直接抛异常导致应用闪退（实测崩在 RefreshTabStyles）。
+    /// </para>
+    /// </summary>
     [RelayCommand]
-    public async Task LoadToplistsAsync()
+    public Task LoadToplistsAsync()
     {
-        // 浏览排行榜不退出电台（同上）
-        IsLoading = true;
-        PlaylistStatus = "正在加载排行榜...";
-        Playlists.Clear();
-        try
-        {
-            var lists = await Task.Run(() => _plugin.GetToplistsAsync());
-            foreach (var pl in lists) Playlists.Add(pl);
-            _browsingToplists = true;
-            _context = BrowseContext.Toplists;
-            PlaylistStatus = Playlists.Count == 0 ? "排行榜加载失败" : "";
-        }
-        catch (Exception ex)
-        {
-            PlaylistStatus = $"排行榜加载失败：{ex.Message}";
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-        ShowCategories = false;
-        ShowSongs = false;
-        ShowArtists = false;
-        ShowPlaylists = true;
+        SelectedTabIndex = 2;
+        return Task.CompletedTask;
     }
 
     /// <summary>我的歌单（需登录）</summary>
@@ -874,6 +1078,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     {
         if (!IsLoggedIn) { ShowTip("登录后可查看我的歌单"); return; }
         // 浏览我的歌单不退出电台（同上）
+        SwitchToSquareView();          // 同上：不切视图的话列表被藏在隐藏容器里
         IsLoading = true;
         PlaylistStatus = "正在加载我的歌单...";
         Playlists.Clear();
@@ -882,6 +1087,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             var lists = await Task.Run(() => _plugin.GetUserPlaylistsAsync());
             foreach (var pl in lists) Playlists.Add(pl);
             _context = BrowseContext.MyPlaylists;
+            _squareContent = SquareContent.MyPlaylists;
             PlaylistStatus = Playlists.Count == 0 ? "暂无歌单" : "";
         }
         catch (Exception ex)
@@ -903,6 +1109,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
     public async Task LoadRecommendPlaylistsAsync()
     {
         // 浏览推荐歌单不退出电台（同上）
+        SwitchToSquareView();          // 同上：不切视图的话列表被藏在隐藏容器里
         IsLoading = true;
         PlaylistStatus = "正在加载推荐歌单...";
         Playlists.Clear();
@@ -911,6 +1118,7 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
             var lists = await Task.Run(() => _plugin.GetRecommendPlaylistsAsync());
             foreach (var pl in lists) Playlists.Add(pl);
             _context = BrowseContext.RecommendPlaylists;
+            _squareContent = SquareContent.RecommendPlaylists;
             PlaylistStatus = Playlists.Count == 0 ? "今日暂无推荐歌单" : "";
         }
         catch (Exception ex)
@@ -1066,12 +1274,10 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
         if (song == null || string.IsNullOrWhiteSpace(song.Id)) return;
         try
         {
-            // Shell.Current 在桌面无 Shell 窗口会抛异常（"?." 防不住），须走 NeteaseNav.TryGetShell；
-            // 桌面回退窗口级 Navigation 模态弹层
-            var nav = NeteaseNav.TryGetShell()?.Navigation
-                ?? Application.Current?.Windows.FirstOrDefault()?.Page?.Navigation;
-            if (nav == null) { ShowTip("无法打开评论区"); return; }
-            await nav.PushModalAsync(new NeteaseCommentsPage(song, _plugin));
+            // 统一走 NeteaseNav.PushAsync：桌面壳层内嵌到主内容区（保留左侧栏/播放条），
+            // Shell 环境压栈，仅在前两者都不可用时才退回整窗模态。
+            // 原实现直接 PushModalAsync → 整窗模态盖住左侧栏（用户反馈"评论区挡住侧栏"）。
+            await NeteaseNav.PushAsync(new NeteaseCommentsPage(song, _plugin));
         }
         catch (Exception ex) { ShowTip($"打开评论失败：{ex.Message}"); }
     }
@@ -1268,6 +1474,23 @@ public partial class NeteaseOnlineMusicViewModel : ObservableObject
 
     /// <summary>播放单首在线歌曲：以当前完整列表构造队列，从点击位置播放（保留上/下一首上下文）</summary>
     public Task PlaySongAsync(OnlineSong song) => PlayFromAsync(song);
+
+    /// <summary>
+    /// 歌曲行「⋮」菜单命令：全插件所有歌曲列表（日推/广场/搜索/歌单详情/专辑/歌手）共用，
+    /// 行模板 <c>NeteaseUiKit.CreateSongItemTemplate</c> 的 <c>SongRowOptions.MenuCommand</c> 绑定到此。
+    /// </summary>
+    public System.Windows.Input.ICommand SongMenuCommand { get; }
+
+    /// <summary>弹出歌曲操作菜单（播放 / 下载 / 红心 / 相似 / MV / 评论 / 不感兴趣）</summary>
+    public async Task ShowSongMenuAsync(OnlineSong? song)
+    {
+        if (song == null) return;
+        ArmSuppressSelection();                  // 供 VM 页面（日推/搜索）消费
+        NeteaseUiKit.ArmRowSelectSuppress();      // 供静态标记页面（歌单详情）消费
+        var page = Application.Current?.Windows.FirstOrDefault()?.Page;
+        if (page == null) return;
+        await NeteaseSongMenu.ShowAsync(page, song, this, _plugin, _services);
+    }
 
     private async Task PlayFromAsync(OnlineSong? startSong)
     {

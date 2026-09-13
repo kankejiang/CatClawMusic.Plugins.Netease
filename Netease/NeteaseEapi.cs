@@ -20,18 +20,98 @@ internal static class NeteaseEapi
         "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.3.203419";
 
     private static readonly Random _rnd = new();
-    // 每进程随机一次设备指纹（模拟桌面客户端），实测无需匿名会话即可通过 eapi 风控
-    private static readonly string DeviceId = RandomHex(32);
-    private static readonly string ClientSign = RandomMac() + "@@@" + RandomUpper(8) + "@@@@@@" + RandomHex(64);
-    private static readonly string OsVer = "Microsoft-Windows-10--build-" + _rnd.Next(20000, 30000) + "-64bit";
-    private static readonly string Mode = _rnd.Next(5) switch
+
+    // ── 设备指纹：**必须跨进程稳定**（关键）──
+    // 网易云会话与设备绑定。原实现每次进程启动都重新随机 deviceId/clientSign，
+    // 于是"登录那个进程"与"续期那个进程"设备号不同 → /eapi/login/token/refresh 被拒
+    // （实测：设备号不匹配时返回 400/301，而同一 Cookie 调歌曲详情却完全正常，
+    //   极易被误判成"会话过期"）。官方客户端与 api-enhanced 同样要求 deviceId 稳定
+    // 持久（后者甚至自带 1.3MB 的 deviceid.txt）。这里落盘一次、之后复用。
+    private static readonly string DeviceFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "CatClawMusic.Maui", "netease_device.txt");
+
+    private static readonly string DeviceId;
+    private static readonly string ClientSign;
+    private static readonly string OsVer;
+    private static readonly string Mode;
+
+    private sealed record DeviceProfile(string DeviceId, string ClientSign, string OsVer, string Mode);
+
+    /// <summary>初始化（或首次生成并持久化）设备指纹</summary>
+    static NeteaseEapi()
     {
-        0 => "MS-iCraft B760M WIFI",
-        1 => "ASUS ROG STRIX Z790",
-        2 => "MSI MAG B550 TOMAHAWK",
-        3 => "ASRock X670E Taichi",
-        _ => "GIGABYTE Z790 AORUS ELITE",
-    };
+        var profile = TryLoadDevice();
+        var firstRun = profile == null;
+        profile ??= new DeviceProfile(
+            RandomHex(32),
+            RandomMac() + "@@@" + RandomUpper(8) + "@@@@@@" + RandomHex(64),
+            "Microsoft-Windows-10--build-" + _rnd.Next(20000, 30000) + "-64bit",
+            _rnd.Next(5) switch
+            {
+                0 => "MS-iCraft B760M WIFI",
+                1 => "ASUS ROG STRIX Z790",
+                2 => "MSI MAG B550 TOMAHAWK",
+                3 => "ASRock X670E Taichi",
+                _ => "GIGABYTE Z790 AORUS ELITE",
+            });
+
+        DeviceId = profile.DeviceId;
+        ClientSign = profile.ClientSign;
+        OsVer = profile.OsVer;
+        Mode = profile.Mode;
+
+        if (firstRun)
+        {
+            TrySaveDevice(profile);
+            NeteaseLoginLog.Write($"首次生成设备指纹并落盘（deviceId={Short(DeviceId)}）");
+        }
+        else
+        {
+            NeteaseLoginLog.Write($"复用已保存设备指纹（deviceId={Short(DeviceId)}）");
+        }
+    }
+
+    private static string Short(string s) => s.Length <= 8 ? s : s.Substring(0, 8) + "…";
+
+    private static DeviceProfile? TryLoadDevice()
+    {
+        try
+        {
+            if (!File.Exists(DeviceFilePath)) return null;
+            string? id = null, sign = null, osver = null, mode = null;
+            foreach (var line in File.ReadAllLines(DeviceFilePath))
+            {
+                var i = line.IndexOf('=');
+                if (i <= 0) continue;
+                var key = line.Substring(0, i).Trim();
+                var val = line.Substring(i + 1).Trim();
+                if (val.Length == 0) continue;
+                switch (key)
+                {
+                    case "deviceId": id = val; break;
+                    case "clientSign": sign = val; break;
+                    case "osver": osver = val; break;
+                    case "mode": mode = val; break;
+                }
+            }
+            if (id == null || sign == null || osver == null || mode == null) return null;
+            return new DeviceProfile(id, sign, osver, mode);
+        }
+        catch { return null; }
+    }
+
+    private static void TrySaveDevice(DeviceProfile p)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(DeviceFilePath);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(DeviceFilePath,
+                $"deviceId={p.DeviceId}\nclientSign={p.ClientSign}\nosver={p.OsVer}\nmode={p.Mode}\n");
+        }
+        catch { }
+    }
 
     // JS JSON.stringify 行为：不转义非 ASCII，只转义引号/反斜杠（与 UnsafeRelaxedJsonEscaping 一致）
     private static readonly JsonSerializerOptions JsonOpt = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -46,11 +126,24 @@ internal static class NeteaseEapi
     public static Task<string?> RequestAsync(HttpClient http, string path, IReadOnlyDictionary<string, object> parameters, string? userCookie)
         => RequestAsync(http, path, parameters, userCookie, rawCipherResponse: false);
 
+    /// <summary>eapi 调用结果：解密后的 body + 响应 Set-Cookie。
+    /// 登录/续期（/eapi/login/token/refresh、/eapi/login/qrcode/*）的新会话只出现在 Set-Cookie 里，
+    /// 只返回 body 的旧签名拿不到，故单独提供本结果类型。</summary>
+    internal sealed class EapiResult
+    {
+        public string? Body { get; init; }
+        public IReadOnlyList<string> SetCookies { get; init; } = Array.Empty<string>();
+    }
+
     /// <param name="rawCipherResponse">
     /// 响应体是否为「裸 AES 密文」。实测 /eapi/song/enhance/player/url/v1 返回裸密文，
     /// 而 /eapi/song/lyric/v1 返回 base64 密文，两个接口格式不同，故需调用方指定。
     /// </param>
     public static async Task<string?> RequestAsync(HttpClient http, string path, IReadOnlyDictionary<string, object> parameters, string? userCookie, bool rawCipherResponse)
+        => (await RequestDetailedAsync(http, path, parameters, userCookie, rawCipherResponse).ConfigureAwait(false)).Body;
+
+    /// <summary>调用 eapi 接口，返回解密后的 body **与响应的 Set-Cookie**（供登录/续期使用）。</summary>
+    public static async Task<EapiResult> RequestDetailedAsync(HttpClient http, string path, IReadOnlyDictionary<string, object> parameters, string? userCookie, bool rawCipherResponse = true)
     {
         try
         {
@@ -100,18 +193,48 @@ internal static class NeteaseEapi
                 : $"os=pc; deviceId={DeviceId}; osver={OsVer}; clientSign={ClientSign}; channel=netease; mode={Mode}; appver={AppVer}");
 
             using var resp = await http.SendAsync(req).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
+            if (!resp.IsSuccessStatusCode)
+            {
+                NeteaseLoginLog.Write($"eapi {path} HTTP {(int)resp.StatusCode}");
+                return new EapiResult();
+            }
+
+            var setCookies = new List<string>();
+            if (resp.Headers.TryGetValues("Set-Cookie", out var values))
+                foreach (var v in values) setCookies.Add(v);
+
             var body = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            var text = rawCipherResponse ? AesEcbDecryptRawToText(body) : AesEcbDecryptBase64ToText(body);
-            if (rawCipherResponse && text != null)
+            var text = DecryptBody(body, rawCipherResponse);
+            if (text != null)
             {
                 // 裸密文按 PKCS7 去填充后尾部可能残留可解析的垃圾字节，截断到最后一个 '}'
                 var end = text.LastIndexOf('}');
                 if (end >= 0 && end < text.Length - 1) text = text.Substring(0, end + 1);
             }
-            return text;
+            return new EapiResult { Body = text, SetCookies = setCookies };
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"eapi {path} 异常: {ex.Message}");
+            return new EapiResult();
+        }
+    }
+
+    /// <summary>
+    /// 解密响应体：按调用方指定的格式优先（裸密文 / base64 密文），失败则换另一种再试。
+    /// 早期实现只认单一格式，一旦某个接口换了包装（实测 lyric 走 base64、player/url 走裸密文、
+    /// token/refresh 走裸密文）就整条链路静默失败，这里两种都容错。
+    /// </summary>
+    private static string? DecryptBody(byte[] body, bool rawFirst)
+    {
+        if (body == null || body.Length == 0) return null;
+        string? text = null;
+        try { text = rawFirst ? AesEcbDecryptRawToText(body) : AesEcbDecryptBase64ToText(body); } catch { }
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            try { text = rawFirst ? AesEcbDecryptBase64ToText(body) : AesEcbDecryptRawToText(body); } catch { }
+        }
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     /// <summary>eapi 歌词：返回 (Lrc, TLrc, RLrc)，失败 null。

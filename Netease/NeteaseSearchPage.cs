@@ -28,9 +28,8 @@ public class NeteaseSearchPage : ContentPage
         BindingContext = _vm;
 
         Title = "搜索";
-        BackgroundColor = Application.Current?.Resources.TryGetValue("WindowBackgroundColor", out var bg) == true
-            ? (Color)bg
-            : Color.FromArgb("#0B0D20");
+        // 统一不透明深色底（与歌单详情页一致）：宿主 WindowBackgroundColor 可能为全透明
+        BackgroundColor = NeteaseUiKit.PageBackground;
 
         // ── 顶部：返回 + 搜索框 ──
         var backButton = new Border
@@ -142,24 +141,18 @@ public class NeteaseSearchPage : ContentPage
 
         var songsView = new CollectionView
         {
-            SelectionMode = SelectionMode.Single,
+            SelectionMode = SelectionMode.None,
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
             RemainingItemsThreshold = 8,
         };
         songsView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         songsView.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
         songsView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
+        // 统一歌单详情页行样式：内联操作全部收进「⋮」菜单
         songsView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
         {
-            HeartCommand = _vm.ToggleLikeCommand,
-            HeartVisibleSource = _vm,
-            HeartVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsLoggedIn),
-            TrashCommand = _vm.TrashFmSongCommand,
-            TrashVisibleSource = _vm,
-            TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
-            SimilarCommand = _vm.LoadSimilarSongsCommand,
-            MvCommand = _vm.OpenMvCommand,
-            CommentCommand = _vm.OpenCommentsCommand,
+            MenuCommand = _vm.SongMenuCommand,
+            PlayCommand = new Microsoft.Maui.Controls.Command<OnlineSong>(async s => await _vm.PlaySongAsync(s)),
         }));
         songsView.SelectionChanged += OnSongSelected;
 
@@ -167,8 +160,8 @@ public class NeteaseSearchPage : ContentPage
         // 视图必须直接放进 Grid 星号行——嵌 VerticalStackLayout 等无界高度容器会
         // 失去虚拟化与滚动（以为自身全可见，超出屏幕的行被裁掉，无法上滑）。
         songsView.Header = songsHeader;
-        songsView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
-        songsHeader.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        songsView.BackgroundColor = NeteaseUiKit.PageBackground;
+        songsHeader.BackgroundColor = NeteaseUiKit.PageBackground;
 
         // ── 结果区：歌单（分页网格，与主页同款分块行方案）──
         var playlistsView = new CollectionView
@@ -191,7 +184,7 @@ public class NeteaseSearchPage : ContentPage
         });
 
         // 歌单结果：直接放星号行（滚动/虚拟化依赖有界高度），不透明背景盖住下层
-        playlistsView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        playlistsView.BackgroundColor = NeteaseUiKit.PageBackground;
         playlistsView.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowPlaylists));
 
         // ── 结果区：歌手 ──
@@ -205,7 +198,7 @@ public class NeteaseSearchPage : ContentPage
         artistsView.SelectionChanged += OnArtistSelected;
 
         // 歌手结果：直接放星号行 + 不透明背景
-        artistsView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        artistsView.BackgroundColor = NeteaseUiKit.PageBackground;
         artistsView.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
 
         // ── 加载指示 + 状态文字 ──
@@ -281,7 +274,7 @@ public class NeteaseSearchPage : ContentPage
     /// <summary>给容器铺不透明窗口背景（内容区视觉折叠：完全盖住下层元素）</summary>
     private static void Opaque(VisualElement view)
     {
-        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        view.BackgroundColor = NeteaseUiKit.PageBackground;
     }
 
     /// <summary>热词/联想 chip 模板（点击回填并搜索）</summary>

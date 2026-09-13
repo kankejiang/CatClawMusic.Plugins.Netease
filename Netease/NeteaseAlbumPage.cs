@@ -28,9 +28,8 @@ public class NeteaseAlbumPage : ContentPage
         _services = services;
 
         Title = album.Name;
-        BackgroundColor = Application.Current?.Resources.TryGetValue("WindowBackgroundColor", out var bg) == true
-            ? (Color)bg
-            : Color.FromArgb("#0B0D20");
+        // 统一不透明深色底（与歌单详情页一致）：宿主 WindowBackgroundColor 可能为全透明
+        BackgroundColor = NeteaseUiKit.PageBackground;
 
         // ── 头部：返回 + 专辑信息 + 播放全部 ──
         // 用 Unicode 箭头 "←" + 固定半透明深色背景，跨主题可见（之前 "‹" + SurfaceColor 在深色头区与页面背景融合，按钮不可见。
@@ -125,13 +124,25 @@ public class NeteaseAlbumPage : ContentPage
         // ── 歌曲列表 ──
         var songsView = new CollectionView
         {
-            SelectionMode = SelectionMode.Single,
+            SelectionMode = SelectionMode.None,
             ItemsSource = _songs,
-            ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate()),
+            // 统一歌单详情页行样式 + 「⋮」菜单。专辑页没有插件主 VM，菜单提供 播放/下载，
+            // 播放走本页 PlayFromAsync（队列上下文与本页列表一致）。
+            ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
+            {
+                PlayCommand = new Microsoft.Maui.Controls.Command<OnlineSong>(async s => await PlayFromAsync(s)),
+                MenuCommand = new Microsoft.Maui.Controls.Command<OnlineSong>(async s =>
+                {
+                    NeteaseUiKit.ArmRowSelectSuppress();
+                    var host = Application.Current?.Windows.FirstOrDefault()?.Page ?? this;
+                    await NeteaseSongMenu.ShowAsync(host, s, null, _plugin, _services, playOverride: PlayFromAsync);
+                }),
+            })),
         };
         songsView.SelectionChanged += async (_, e) =>
         {
             songsView.SelectedItem = null;
+            if (NeteaseUiKit.ConsumeRowSelectSuppress()) return;
             if (e.CurrentSelection.FirstOrDefault() is not OnlineSong song) return;
             await PlayFromAsync(song);
         };

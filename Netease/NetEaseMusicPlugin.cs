@@ -178,15 +178,21 @@ public class NetEaseMusicPlugin : IOnlineMusicPlugin, IViewContributorPlugin, IL
         }
         catch { }
 
-        // 登录态长保：启动时静默续期一次（/api/login/token/refresh 换发新 Cookie）。
-        // 运行期会话失效由客户端 GetJsonAsync 的 301 检测自动续期，续期失败才提示重登。
-        // 实现"一次登录长期有效"，避免 MUSIC_U 过期后私人漫游静默降级成游客泛推荐。
+        // 登录态长保：启动时静默续期一次（/eapi/login/token/refresh 换发新会话 Cookie）。
+        // 运行期由定时续期（StartAutoRefresh）+ 接口 301 重试兜底。
+        // 注意：只有**应用态会话**（扫码登录）才能续期；网页版会话调该接口恒返回 301。
         if (_client.HasCookie)
         {
+            NeteaseLoginLog.Write("插件初始化：检测到已保存会话，尝试静默续期并开启定时续期");
             _ = Task.Run(async () =>
             {
                 try { await _client.RefreshLoginTokenAsync(); } catch { }
             });
+            _client.StartAutoRefresh();
+        }
+        else
+        {
+            NeteaseLoginLog.Write("插件初始化：未登录（无 netease_cookie.txt）");
         }
         return Task.CompletedTask;
     }

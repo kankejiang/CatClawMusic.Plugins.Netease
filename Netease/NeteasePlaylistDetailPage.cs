@@ -56,7 +56,8 @@ public class NeteasePlaylistDetailPage : ContentPage
         _playlist = playlist;
         _services = services;
 
-        BackgroundColor = Color.FromArgb("#15151A");
+        // 统一不透明深色底（插件各页共用，见 NeteaseUiKit.PageBackground）
+        BackgroundColor = NeteaseUiKit.PageBackground;
         BindingContext = _vm; // 歌曲列表 ItemsSource 绑定 VM.Songs
 
         Content = BuildRoot();
@@ -118,11 +119,19 @@ public class NeteasePlaylistDetailPage : ContentPage
         {
             Aspect = Aspect.AspectFill,
             InputTransparent = true,
+            // ⚠ 必须限定尺寸：Windows 上 Image 按原图自然尺寸参与测量（网易云封面常见 1000px 级），
+            // 而这里位于 headerHost 的 Auto 行内 → 该行被撑到上千像素，顶栏/歌单信息/三胶囊/播放全部条
+            // 全被顶出可视区，整屏只剩一张暗化封面（PC 端尤其明显）。
+            // 取一个不超过头部内容自然高度的值作为测量上限，配合 RowSpan 铺满整个头部块。
+            HeightRequest = 240,
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Fill,
         };
         bg.SetBinding(Image.SourceProperty, new Binding(nameof(OnlinePlaylist.CoverUrl),
-            converter: NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance)
+            converter: NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance, converterParameter: 800)
         { Source = _playlist });
         headerHost.Children.Add(bg);
+        Grid.SetRowSpan(bg, 4);
 
         var overlay = new BoxView
         {
@@ -137,6 +146,8 @@ public class NeteasePlaylistDetailPage : ContentPage
                 new Point(0, 0), new Point(0, 1)),
         };
         headerHost.Children.Add(overlay);
+        // 遮罩同样跨 4 行：与背景图一起铺满整个头部块（此前只在行 0，行 0 不再被背景撑大后需显式跨行）
+        Grid.SetRowSpan(overlay, 4);
 
         headerHost.Children.Add(Cell(BuildTopBar(), 0));
         headerHost.Children.Add(Cell(BuildHeader(), 1));
@@ -316,62 +327,27 @@ public class NeteasePlaylistDetailPage : ContentPage
         var list = new CollectionView
         {
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical) { ItemSpacing = 0 },
+            SelectionMode = SelectionMode.None,   // 播放改由行内「封面/文字」PlayCommand，⋮ 不触发
             ItemSizingStrategy = ItemSizingStrategy.MeasureFirstItem, // 行高一致，只测首行
             // Android：不透明深色背景保证下半屏观感与官方一致（CollectionView 自身会裁剪内容，不再有 ScrollView 上滑溢出问题）
             BackgroundColor = Color.FromArgb("#141418"),
         };
         list.SetBinding(ItemsView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
-        list.ItemTemplate = new DataTemplate(() =>
+        // 行样式统一走共享模板（与 日推/广场/搜索/专辑/歌手 完全一致）：44dp 封面 + 标题/艺术家 + 「⋮」菜单
+        list.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
         {
-            var cover = new Image
-            {
-                WidthRequest = 44, HeightRequest = 44, Aspect = Aspect.AspectFill,
-                VerticalOptions = LayoutOptions.Center,
-            };
-            // 44dp 行内封面：converter 按 150 最大边裁剪（3x 屏 ≈132px），避免解码 1000² 原图
-            cover.SetBinding(Image.SourceProperty, new Binding(nameof(OnlineSong.CoverUrl),
-                converter: NeteaseUiKit.OnlineUrlToStreamImageConverter.Instance, converterParameter: 150)
-            { TargetNullValue = "ic_music_note" });
-            var coverBorder = new Border
-            {
-                StrokeThickness = 0,
-                StrokeShape = new RoundRectangle { CornerRadius = 6 },
-                Content = cover,
-            };
+            MenuCommand = _vm.SongMenuCommand,
+            PlayCommand = new Microsoft.Maui.Controls.Command<OnlineSong>(async s => await _vm.PlaySongAsync(s)),
+        }));
 
-            var title = new Label
-            {
-                FontSize = 14, TextColor = Color.FromArgb("#F2FFFFFF"),
-                MaxLines = 1, LineBreakMode = LineBreakMode.TailTruncation,
-            };
-            title.SetBinding(Label.TextProperty, nameof(OnlineSong.Title));
-
-            var artist = new Label
-            {
-                FontSize = 11, TextColor = Color.FromArgb("#99FFFFFF"),
-                MaxLines = 1, LineBreakMode = LineBreakMode.TailTruncation, Margin = new Thickness(0, 2, 0, 0),
-            };
-            artist.SetBinding(Label.TextProperty, nameof(OnlineSong.Artist));
-
-            var more = WhiteGlyph("⋮", 18);
-            more.VerticalOptions = LayoutOptions.Center;
-            more.GestureRecognizers.Add(MakeTap(async () =>
-            {
-                if ((more.BindingContext as OnlineSong) is { } s) await ShowSongMenuAsync(s);
-            }));
-
-            return new Grid
-            {
-                ColumnDefinitions = ColumnDefinitions("Auto,Star,Auto"),
-                ColumnSpacing = 12,
-                Padding = new Thickness(0, 6),
-                GestureRecognizers = { MakeTap(async () =>
-                {
-                    if ((more.BindingContext as OnlineSong) is { } s) await _vm.PlaySongAsync(s);
-                }) },
-                Children = { Cell(coverBorder), Cell(new VerticalStackLayout { Spacing = 0, VerticalOptions = LayoutOptions.Center, Children = { title, artist } }, col: 1), Cell(more, col: 2) },
-            };
-        });
+        // 行点击播放：原实现在行内自带 Tap 手势，改用共享模板后统一走 SelectionChanged
+        list.SelectionChanged += async (_, e) =>
+        {
+            list.SelectedItem = null;
+            if (NeteaseUiKit.ConsumeRowSelectSuppress()) return;
+            if (e.CurrentSelection.FirstOrDefault() is not OnlineSong song) return;
+            await _vm.PlaySongAsync(song);
+        };
         return list;
     }
 
@@ -425,33 +401,6 @@ public class NeteasePlaylistDetailPage : ContentPage
         _countLabel.Text = $"{count} 首 · {duration}";
     }
 
-    private async Task ShowSongMenuAsync(OnlineSong song)
-    {
-        var page = GetHostPage() ?? this;
-        var pick = await page.DisplayActionSheetAsync(song.Title, "取消", null,
-            "▶ 播放", "⬇ 下载音乐", "❤ 红心 / 取消红心", "💬 查看评论");
-        switch (pick)
-        {
-            case "▶ 播放":
-                await _vm.PlaySongAsync(song);
-                break;
-            case "⬇ 下载音乐":
-                var q = await _plugin.PickDownloadQualityAsync();
-                if (q != null)
-                {
-                    var ok = await _plugin.DownloadOnlineSongAsync(song, q, _services);
-                    await ToastAsync(ok ? $"已加入下载队列：{song.Title}" : "下载失败：无法获取播放直链");
-                }
-                break;
-            case "❤ 红心 / 取消红心":
-                await _vm.ToggleLikeAsync(song);
-                break;
-            case "💬 查看评论":
-                await _vm.OpenCommentsAsync(song);
-                break;
-        }
-    }
-
     private async Task ShowPageMenuAsync()
     {
         var page = GetHostPage() ?? this;
@@ -479,12 +428,19 @@ public class NeteasePlaylistDetailPage : ContentPage
 
     private async Task OpenPlaylistCommentsAsync()
     {
-        var nav = NeteaseNav.TryGetShell()?.Navigation
-            ?? Application.Current?.Windows.FirstOrDefault()?.Page?.Navigation;
-        if (nav == null) { await ToastAsync("无法打开评论区"); return; }
-        await nav.PushModalAsync(new NeteaseCommentsPage(
-            new OnlineSong { Id = _playlist.Id, Title = _playlist.Name, Platform = "netease" },
-            _plugin, isPlaylist: true));
+        // 必须走 NeteaseNav.PushAsync：桌面壳层会内嵌到主内容区（保留左侧栏与底部播放条）。
+        // 原实现直接 PushModalAsync → 整窗模态把侧栏一起盖住（用户反馈"评论区挡住侧栏"）。
+        try
+        {
+            await NeteaseNav.PushAsync(new NeteaseCommentsPage(
+                new OnlineSong { Id = _playlist.Id, Title = _playlist.Name, Platform = "netease" },
+                _plugin, isPlaylist: true));
+        }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"打开歌单评论失败：{ex.Message}");
+            await ToastAsync("无法打开评论区");
+        }
     }
 
     private async Task CollectPlaylistAsync()

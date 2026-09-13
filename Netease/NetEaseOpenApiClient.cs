@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CatClawMusic.Core.Models;
@@ -89,13 +90,28 @@ public class NeteaseOpenApiClient
         if (!string.IsNullOrWhiteSpace(cookie)
             && cookie.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase))
         {
-            _cookie = cookie;
-            PersistCookie(cookie);
+            // 统一规范化（去重/去属性/按名合并），扫码返回的是 Set-Cookie 串，可能带 Path 等属性
+            _cookie = string.Join("; ", ParseCookieJar(cookie).Select(kv => $"{kv.Key}={kv.Value}"));
+            PersistCookie(_cookie);
             // 新账号登录：清空上一个账号的派生缓存
             _userId = null;
             _likedPlaylistId = null;
             _likedSongIds = null;
             _likedSongs = null;
+            NeteaseLoginLog.Write($"登录成功：已保存会话（{_cookie.Length} 字符，{ParseCookieJar(_cookie).Count} 个字段）");
+            // 登录后立刻起定时续期（应用态会话支持续期，网页版会话不支持）
+            StartAutoRefresh();
+            // 另起一次"登录后立即探活"：让 netease_login.log 尽快给出"这个会话能否续期"的结论，
+            // 同时把服务端可能新下发的会话落盘（失败不影响本次登录成功）。
+            _ = Task.Run(async () =>
+            {
+                try { await Task.Delay(3000).ConfigureAwait(false); await RefreshLoginTokenAsync().ConfigureAwait(false); }
+                catch { }
+            });
+        }
+        else
+        {
+            NeteaseLoginLog.Write("收到的登录 Cookie 不含 MUSIC_U，已忽略（避免匿名 Cookie 覆盖已登录状态）");
         }
         return Task.CompletedTask;
     }
@@ -127,7 +143,28 @@ public class NeteaseOpenApiClient
             }
         }
         catch { }
-        // 兜底：读取登录时缓存的昵称
+        // 兜底一：account/get 实测恒返回 {code:200, account:null, profile:null}（该接口对当前客户端形态
+        // 已不可用），改用 user/detail 取昵称，避免昵称永远只能靠本地缓存文件撑着。
+        try
+        {
+            var uid = await GetUserIdAsync();
+            if (uid is long u && u > 0)
+            {
+                using var doc = await GetJsonAsync($"https://music.163.com/api/v1/user/detail/{u}");
+                if (doc != null && doc.RootElement.TryGetProperty("profile", out var p)
+                    && p.TryGetProperty("nickname", out var n) && !string.IsNullOrWhiteSpace(n.GetString()))
+                {
+                    var nickname = n.GetString();
+                    if (!string.IsNullOrWhiteSpace(nickname))
+                    {
+                        try { File.WriteAllText(NicknameFilePath, nickname); } catch { }
+                        return nickname;
+                    }
+                }
+            }
+        }
+        catch { }
+        // 兜底二：读取登录时缓存的昵称
         try
         {
             if (File.Exists(NicknameFilePath))
@@ -170,6 +207,7 @@ public class NeteaseOpenApiClient
         try { if (File.Exists(CookieFilePath)) File.Delete(CookieFilePath); } catch { }
         try { if (File.Exists(NicknameFilePath)) File.Delete(NicknameFilePath); } catch { }
         try { if (File.Exists(UidFilePath)) File.Delete(UidFilePath); } catch { }
+        NeteaseLoginLog.Write("已退出登录（本地会话与昵称/uid 缓存已清除）");
     }
 
     /// <summary>持久化登录 Cookie（供插件 InitializeAsync 重启后恢复）</summary>
@@ -185,48 +223,402 @@ public class NeteaseOpenApiClient
     }
 
     /// <summary>
-    /// 登录态续期：POST /api/login/token/refresh（老明文 web 接口，带当前 Cookie 换发新 Cookie）。
-    /// 仿 api-enhanced 的 login_refresh 实现：响应 Set-Cookie 中含新 MUSIC_U 即续期成功，
-    /// 更新内存 <see cref="_cookie"/> 并持久化。会话有效期内定期/失效时调用可链式续期，
-    /// 实现「一次登录长期有效」（官方 App 的静默续期同理）。
+    /// 登录态续期：走 **eapi** 通道 POST /eapi/login/token/refresh。
+    /// <para>
+    /// 为什么改成 eapi：官方 login_refresh 实现（api-enhanced/module/login_refresh.js）用
+    /// <c>createOption(query)</c>，而 <c>util/config.json</c> 里 <c>encrypt=true</c> → crypto 回落到 **eapi**，
+    /// 即请求实际发往 <c>{eapiDomain}/eapi/login/token/refresh</c>。历史实现是**明文** POST
+    /// <c>music.163.com/api/login/token/refresh</c> —— 实测**恒返回 code 301**（即便换用完全有效的
+    /// Cookie，甚至补上 csrf_token 也一样），因为该接口只接受加密通道；于是"静默续期"从未生效，
+    /// 登录态只能等会话自然过期（用户反馈"网页版登录容易过期"）。
+    /// </para>
+    /// <para>
+    /// 另注：**网页版登录的 MUSIC_U 属于 Web 会话，本接口不认**（实测有效 web cookie 亦 301；
+    /// 同一条 eapi 通道调 /eapi/v3/song/detail 却正常返回，证明通道与 Cookie 都没问题）。
+    /// 只有扫码/手机号这类**应用态会话**才可续期，故登录入口已改为扫码（见 GetQrKeyAsync）。
+    /// </para>
     /// </summary>
     public async Task<bool> RefreshLoginTokenAsync()
     {
         if (string.IsNullOrWhiteSpace(_cookie)) return false;
         try
         {
-            using var req = Build(HttpMethod.Post, "https://music.163.com/api/login/token/refresh");
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return false;
-
-            var sets = CollectSetCookies(resp);
-            if (sets.Count == 0) return false;
-            var merged = string.Join("; ", sets);
-            // 新会话必须仍含 MUSIC_U（登录凭据），否则只是匿名 Cookie 回显，判定失败
-            if (!merged.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            _cookie = merged;
-            PersistCookie(merged);
-            // 同一账号会话续期：保留 userId/红心等派生态（不换账号，无需清空前缀缓存）
-            return true;
+            var res = await NeteaseEapi.RequestDetailedAsync(_http, "/eapi/login/token/refresh",
+                new Dictionary<string, object>(), _cookie, rawCipherResponse: true).ConfigureAwait(false);
+            var code = ReadCode(res.Body);
+            var gotNewSession = MergeSetCookies(res.SetCookies);
+            if (code == 200)
+            {
+                if (gotNewSession)
+                {
+                    PersistCookie(_cookie!);
+                    NeteaseLoginLog.Write($"续期成功：code=200，服务端轮换了会话（Set-Cookie {res.SetCookies.Count} 条，已保存新 MUSIC_U）");
+                }
+                else
+                {
+                    // 实测手机号验证码登录的会话走这里：code=200 表示会话被接受、有效期顺延，
+                    // 服务端本次只是不轮换 MUSIC_U —— 这同样是成功，别误判成失败。
+                    NeteaseLoginLog.Write($"续期成功：code=200（服务端返回 {res.SetCookies.Count} 条 Cookie，本次未轮换 MUSIC_U，会话有效期已顺延）");
+                }
+                return true;
+            }
+            NeteaseLoginLog.Write($"续期失败：code={(code?.ToString() ?? "无 body")}（Set-Cookie {res.SetCookies.Count} 条，含 MUSIC_U={gotNewSession}）");
+            return false;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"续期异常：{ex.Message}");
+            return false;
+        }
     }
 
-    /// <summary>从响应头提取 Set-Cookie 的 name=value 段（丢弃 Path=/ 等属性），无则空列表</summary>
-    private static List<string> CollectSetCookies(HttpResponseMessage resp)
+    // ── 定时续期（续期时机之二；之一为插件初始化，之三为接口 301 重试）──
+
+    private Timer? _refreshTimer;
+
+    /// <summary>启动定时续期：30 秒后首检，之后每 6 小时一次。幂等。</summary>
+    public void StartAutoRefresh()
     {
-        var list = new List<string>();
-        if (resp.Headers.TryGetValues("Set-Cookie", out var values))
+        if (_refreshTimer != null) return;
+        _refreshTimer = new Timer(_ => _ = AutoRefreshTickAsync(), null,
+            TimeSpan.FromSeconds(30), TimeSpan.FromHours(6));
+        NeteaseLoginLog.Write("定时续期已启动（30 秒后首检，之后每 6 小时）");
+    }
+
+    private async Task AutoRefreshTickAsync()
+    {
+        try
         {
-            foreach (var v in values)
+            if (!HasCookie) return;
+            await RefreshLoginTokenAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) { NeteaseLoginLog.Write($"定时续期异常：{ex.Message}"); }
+    }
+
+    // ── 二维码登录（应用态会话；网页版会话无法续期，故登录入口改用扫码）──
+
+    /// <summary>申请登录二维码 key（eapi /eapi/login/qrcode/unikey）；失败返回 null。</summary>
+    public async Task<string?> GetQrKeyAsync(int type = 3)
+    {
+        try
+        {
+            var res = await NeteaseEapi.RequestDetailedAsync(_http, "/eapi/login/qrcode/unikey",
+                new Dictionary<string, object> { ["type"] = type }, _cookie, rawCipherResponse: true).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(res.Body)) return null;
+            using var doc = JsonDocument.Parse(res.Body);
+            if (doc.RootElement.TryGetProperty("unikey", out var k))
             {
-                var first = v.Split(';')[0].Trim();
-                if (first.Length > 0) list.Add(first);
+                var key = k.GetString();
+                if (!string.IsNullOrWhiteSpace(key)) return key;
+            }
+            NeteaseLoginLog.Write($"申请二维码 key 返回异常：{res.Body}");
+        }
+        catch (Exception ex) { NeteaseLoginLog.Write($"获取二维码 key 失败：{ex.Message}"); }
+        return null;
+    }
+
+    /// <summary>
+    /// 轮询扫码结果（eapi /eapi/login/qrcode/client/login）。
+    /// code：801 等待扫码 / 802 已扫码待确认 / 803 授权成功 / 800 二维码过期 / 8821 等为环境风控。
+    /// 803 时从 Set-Cookie（或 body.cookie 兜底）取出应用态会话串。
+    /// </summary>
+    public async Task<(int Code, string? Cookie)> CheckQrLoginAsync(string key, int type = 3)
+    {
+        try
+        {
+            var res = await NeteaseEapi.RequestDetailedAsync(_http, "/eapi/login/qrcode/client/login",
+                new Dictionary<string, object> { ["key"] = key, ["type"] = type }, _cookie, rawCipherResponse: true).ConfigureAwait(false);
+            var code = ReadCode(res.Body) ?? -1;
+            string? cookie = null;
+            if (code == 803)
+            {
+                if (res.SetCookies.Count > 0)
+                    cookie = string.Join("; ", res.SetCookies
+                        .Select(x => x.Split(';')[0].Trim())
+                        .Where(x => x.Contains('=')));
+                if (string.IsNullOrWhiteSpace(cookie)) cookie = ReadBodyCookie(res.Body);
+                NeteaseLoginLog.Write(cookie == null
+                    ? "扫码授权成功（803）但未取到 Cookie"
+                    : $"扫码授权成功（803），已取到会话 Cookie（{cookie.Length} 字符）");
+            }
+            return (code, cookie);
+        }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"扫码轮询异常：{ex.Message}");
+            return (-1, null);
+        }
+    }
+
+    /// <summary>部分实现把登录 Cookie 放在 body.cookie 字段，做一层兜底</summary>
+    private static string? ReadBodyCookie(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("cookie", out var c) && c.ValueKind == JsonValueKind.String)
+                return c.GetString();
+        }
+        catch { }
+        return null;
+    }
+
+    // ── 手机号验证码登录（国内 App 默认方式；三步都走 weapi）──
+
+    /// <summary>
+    /// 第一步：发送短信验证码。<c>POST /api/sms/captcha/sent</c>
+    /// （<c>secrete=music_middleuser_pclogin</c> 是官方"PC 端登录"场景标识，缺了会被拒）
+    /// </summary>
+    public async Task<(int Code, string? Message)> SendSmsCodeAsync(string phone, string countryCode = "86")
+    {
+        var p = (phone ?? string.Empty).Trim();
+        if (p.Length < 6) return (-1, "请填写正确的手机号");
+        var res = await NeteaseWeapi.RequestDetailedAsync(_http, "/api/sms/captcha/sent", new Dictionary<string, object>
+        {
+            ["ctcode"] = string.IsNullOrWhiteSpace(countryCode) ? "86" : countryCode.Trim(),
+            ["secrete"] = "music_middleuser_pclogin",
+            ["cellphone"] = p,
+        }, null).ConfigureAwait(false);
+        var code = ReadCode(res.Body) ?? -1;
+        var message = ReadMessage(res.Body);
+        NeteaseLoginLog.Write($"发送短信验证码（{Mask(p)}）：code={code}{(string.IsNullOrWhiteSpace(message) ? "" : $"，{message}")}");
+        return (code, message);
+    }
+
+    /// <summary>第二步：校验验证码 <c>POST /api/sms/captcha/verify</c>（官方登录流程里登录前先校验一次，便于给出"验证码错误"）</summary>
+    public async Task<(int Code, string? Message)> VerifySmsCodeAsync(string phone, string captcha, string countryCode = "86")
+    {
+        var res = await NeteaseWeapi.RequestDetailedAsync(_http, "/api/sms/captcha/verify", new Dictionary<string, object>
+        {
+            ["ctcode"] = string.IsNullOrWhiteSpace(countryCode) ? "86" : countryCode.Trim(),
+            ["cellphone"] = (phone ?? string.Empty).Trim(),
+            ["captcha"] = (captcha ?? string.Empty).Trim(),
+        }, null).ConfigureAwait(false);
+        var code = ReadCode(res.Body) ?? -1;
+        var message = ReadMessage(res.Body);
+        NeteaseLoginLog.Write($"校验短信验证码（{Mask(phone ?? "")}）：code={code}{(string.IsNullOrWhiteSpace(message) ? "" : $"，{message}")}");
+        return (code, message);
+    }
+
+    /// <summary>
+    /// 第三步：验证码登录。官方流程为 校验 → 登录，这里合并成一次调用。
+    /// <c>POST /api/w/login/cellphone</c>（captcha 与 password 互斥）。
+    /// </summary>
+    public async Task<(int Code, string? Cookie, string? Message)> LoginWithSmsAsync(string phone, string captcha, string countryCode = "86")
+    {
+        var p = (phone ?? string.Empty).Trim();
+        var c = (captcha ?? string.Empty).Trim();
+        if (p.Length < 6) return (-1, null, "请填写正确的手机号");
+        if (c.Length == 0) return (-1, null, "请填写短信验证码");
+
+        var (verifyCode, verifyMsg) = await VerifySmsCodeAsync(p, c, countryCode).ConfigureAwait(false);
+        if (verifyCode != 200)
+            return (verifyCode == -1 ? -1 : (verifyCode is 502 or 503 ? 502 : verifyCode), null,
+                    string.IsNullOrWhiteSpace(verifyMsg) ? "验证码校验失败" : verifyMsg);
+
+        return await WeapiLoginAsync("/api/w/login/cellphone", new Dictionary<string, object>
+        {
+            ["type"] = "1",
+            ["https"] = "true",
+            ["phone"] = p,
+            ["countrycode"] = string.IsNullOrWhiteSpace(countryCode) ? "86" : countryCode.Trim(),
+            ["captcha"] = c,
+            ["remember"] = "true",
+            ["secureCaptcha"] = "",
+        }, $"手机号验证码登录（{Mask(p)}）").ConfigureAwait(false);
+    }
+
+    /// <summary>weapi 登录类接口的共用收尾：读 code、取 Set-Cookie 里的会话、写日志</summary>
+    private async Task<(int Code, string? Cookie, string? Message)> WeapiLoginAsync(
+        string path, Dictionary<string, object> data, string logWhat)
+    {
+        try
+        {
+            var res = await NeteaseWeapi.RequestDetailedAsync(_http, path, data, null).ConfigureAwait(false);
+            var code = ReadCode(res.Body) ?? -1;
+            var message = ReadMessage(res.Body);
+            var cookie = code == 200 ? ExtractLoginCookie(res.SetCookies, res.Body) : null;
+            NeteaseLoginLog.Write($"{logWhat}：code={code}"
+                + (code == 200
+                    ? $"，取到 Cookie {cookie?.Length ?? 0} 字符，含 MUSIC_U={cookie?.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase) == true}"
+                    : (string.IsNullOrWhiteSpace(message) ? "" : $"，{message}")));
+            return (code, cookie, message);
+        }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"{logWhat} 异常：{ex.Message}");
+            return (-1, null, ex.Message);
+        }
+    }
+
+    /// <summary>登录响应里取会话：优先 Set-Cookie，其次 body.cookie 兜底</summary>
+    private static string? ExtractLoginCookie(IReadOnlyList<string> sets, string? body)
+    {
+        if (sets.Count > 0)
+        {
+            var joined = string.Join("; ", sets.Select(x => x.Split(';')[0].Trim()).Where(x => x.Contains('=')));
+            if (!string.IsNullOrWhiteSpace(joined)) return joined;
+        }
+        return ReadBodyCookie(body);
+    }
+
+    // ── 邮箱 + 密码登录（手机号密码登录见下）──
+
+    /// <summary>
+    /// 账号密码登录。手机号走 <c>/api/w/login/cellphone</c>（官方该模块用 **weapi**，type=1），
+    /// 邮箱走 <c>/api/w/login</c>（官方用 eapi，type=0）；密码须为 **MD5 小写十六进制**。
+    /// <para>常见 code：501 账号不存在 / 502 账号或密码错误 / 503 操作过于频繁 / 8810、8821 风控需图形或短信验证。</para>
+    /// </summary>
+    /// <returns>(code, cookie, message)：code==200 且 cookie 含 MUSIC_U 才算登录成功</returns>
+    public async Task<(int Code, string? Cookie, string? Message)> LoginWithPasswordAsync(
+        string account, string password, string countryCode = "86")
+    {
+        var acc = (account ?? string.Empty).Trim();
+        if (acc.Length == 0 || string.IsNullOrEmpty(password))
+            return (-1, null, "请填写账号和密码");
+
+        var md5 = Md5HexLower(password);
+        var isPhone = acc.All(char.IsDigit);
+        try
+        {
+            string? body;
+            IReadOnlyList<string> sets;
+            if (isPhone)
+            {
+                var res = await NeteaseWeapi.RequestDetailedAsync(_http, "/api/w/login/cellphone",
+                    new Dictionary<string, object>
+                    {
+                        ["type"] = "1",
+                        ["https"] = "true",
+                        ["phone"] = acc,
+                        ["countrycode"] = string.IsNullOrWhiteSpace(countryCode) ? "86" : countryCode.Trim(),
+                        ["password"] = md5,
+                        ["remember"] = "true",
+                        ["secureCaptcha"] = "",
+                    }, null).ConfigureAwait(false);
+                body = res.Body;
+                sets = res.SetCookies;
+            }
+            else
+            {
+                var res = await NeteaseEapi.RequestDetailedAsync(_http, "/eapi/w/login",
+                    new Dictionary<string, object>
+                    {
+                        ["type"] = "0",
+                        ["https"] = "true",
+                        ["username"] = acc,
+                        ["password"] = md5,
+                        ["rememberLogin"] = "true",
+                    }, null, rawCipherResponse: true).ConfigureAwait(false);
+                body = res.Body;
+                sets = res.SetCookies;
+            }
+
+            var code = ReadCode(body) ?? -1;
+            var message = ReadMessage(body);
+            var cookie = code == 200 ? ExtractLoginCookie(sets, body) : null;
+
+            NeteaseLoginLog.Write($"账号密码登录（{(isPhone ? "手机号" : "邮箱")} {Mask(acc)}）：code={code}"
+                + (code == 200
+                    ? $"，取到 Cookie {cookie?.Length ?? 0} 字符，含 MUSIC_U={cookie?.Contains("MUSIC_U=", StringComparison.OrdinalIgnoreCase) == true}"
+                    : (string.IsNullOrWhiteSpace(message) ? "" : $"，{message}")));
+            return (code, cookie, message);
+        }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"账号密码登录异常：{ex.Message}");
+            return (-1, null, ex.Message);
+        }
+    }
+
+    /// <summary>账号打码后再进日志（避免明文手机号/邮箱落盘）</summary>
+    private static string Mask(string s)
+        => s.Length <= 4 ? "***" : s.Substring(0, 3) + "***" + s.Substring(s.Length - 2);
+
+    private static string Md5HexLower(string s)
+        => Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(s)));
+
+    private static string? ReadMessage(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            foreach (var key in new[] { "message", "msg" })
+            {
+                if (doc.RootElement.TryGetProperty(key, out var m) && m.ValueKind == JsonValueKind.String)
+                {
+                    var text = m.GetString();
+                    if (!string.IsNullOrWhiteSpace(text)) return text;
+                }
             }
         }
-        return list;
+        catch { }
+        return null;
+    }
+
+    /// <summary>从响应 body 读业务 code（非 JSON / 缺字段返回 null）</summary>
+    private static int? ReadCode(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number
+                && c.TryGetInt32(out var v)) return v;
+        }
+        catch { }
+        return null;
+    }
+
+    // ── Cookie 合并（修复"续期后丢失 __csrf 等字段"）──
+
+    /// <summary>
+    /// 把响应 Set-Cookie 合并进当前 Cookie 串：同名替换、新名追加、值为空视为删除。
+    /// <para>
+    /// 修复点：旧实现是 <c>_cookie = string.Join("; ", 响应里那几个 Cookie)</c> —— 用**新下发的少数几条
+    /// 覆盖整串**，于是未被重发的 <c>__csrf</c>、<c>_ntes_nnid</c>、<c>JSESSIONID-WYYY</c> 等全部丢失；
+    /// 而老 /api/* 接口（红心 manipulate/tracks 等）依赖 <c>__csrf</c>，续期后这些功能会莫名失效。
+    /// </para>
+    /// </summary>
+    /// <returns>本次是否收到新的 MUSIC_U（登录凭据）</returns>
+    private bool MergeSetCookies(IReadOnlyList<string> setCookies)
+    {
+        if (setCookies.Count == 0) return false;
+        var jar = ParseCookieJar(_cookie ?? "");
+        var gotMusicU = false;
+        foreach (var raw in setCookies)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var first = raw.Split(';')[0].Trim();
+            var idx = first.IndexOf('=');
+            if (idx <= 0) continue;
+            var name = first.Substring(0, idx).Trim();
+            var value = first.Substring(idx + 1).Trim();
+            if (name.Length == 0) continue;
+            if (value.Length == 0) { jar.Remove(name); continue; }
+            jar[name] = value;
+            if (string.Equals(name, "MUSIC_U", StringComparison.OrdinalIgnoreCase)) gotMusicU = true;
+        }
+        _cookie = string.Join("; ", jar.Select(kv => $"{kv.Key}={kv.Value}"));
+        return gotMusicU;
+    }
+
+    /// <summary>解析 Cookie 串为字典（同名以最后一个为准）</summary>
+    private static Dictionary<string, string> ParseCookieJar(string cookie)
+    {
+        var jar = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(cookie)) return jar;
+        foreach (var part in cookie.Split(';'))
+        {
+            var kv = part.Trim();
+            if (kv.Length == 0) continue;
+            var idx = kv.IndexOf('=');
+            if (idx <= 0) continue;
+            jar[kv.Substring(0, idx).Trim()] = kv.Substring(idx + 1).Trim();
+        }
+        return jar;
     }
 
     /// <summary>通知 UI 登录已过期（30 秒节流，防接口风暴连弹）</summary>
@@ -234,6 +626,7 @@ public class NeteaseOpenApiClient
     {
         if ((DateTime.UtcNow - _lastExpiredRaisedUtc).TotalSeconds < 30) return;
         _lastExpiredRaisedUtc = DateTime.UtcNow;
+        NeteaseLoginLog.Write("登录态已失效且续期失败 → 通知界面提示重新登录");
         try { LoginExpired?.Invoke(); } catch { }
     }
 
@@ -722,6 +1115,47 @@ public class NeteaseOpenApiClient
             return list;
         }
         catch { return new List<OnlinePlaylist>(); }
+    }
+
+    /// <summary>
+    /// 官方歌单分类（**分组**版，供「更多分类」使用）：/api/playlist/catalogue 返回
+    /// <c>categories = { 组索引: 组名 }</c> 与 <c>sub[] = { name, category(组索引) }</c>，
+    /// 官方 App 的「更多分类」正是按此分组展示（语种/风格/场景/情感/主题，组内再列分类）。
+    /// 失败返回 null，调用方回退扁平列表。
+    /// </summary>
+    public async Task<List<(string Group, List<string> Names)>?> GetPlaylistCategoryGroupsAsync()
+    {
+        try
+        {
+            using var doc = await GetJsonAsync("https://music.163.com/api/playlist/catalogue");
+            if (doc == null) return null;
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("sub", out var sub) || sub.ValueKind != JsonValueKind.Array) return null;
+
+            var groupNames = new Dictionary<int, string>();
+            if (root.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var p in cats.EnumerateObject())
+                    if (int.TryParse(p.Name, out var idx) && p.Value.ValueKind == JsonValueKind.String)
+                        groupNames[idx] = p.Value.GetString() ?? "";
+            }
+
+            var grouped = new Dictionary<int, List<string>>();
+            foreach (var c in sub.EnumerateArray())
+            {
+                var name = c.TryGetProperty("name", out var n) ? n.GetString() : null;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var gi = c.TryGetProperty("category", out var cg) && cg.TryGetInt32(out var g) ? g : 0;
+                if (!grouped.TryGetValue(gi, out var list)) grouped[gi] = list = new List<string>();
+                list.Add(name!);
+            }
+
+            var result = new List<(string Group, List<string> Names)>();
+            foreach (var kv in grouped.OrderBy(k => k.Key))
+                result.Add((groupNames.TryGetValue(kv.Key, out var gn) && !string.IsNullOrWhiteSpace(gn) ? gn : "其他", kv.Value));
+            return result.Count > 0 ? result : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>官方歌单分类（/api/playlist/catalogue；失败返回 null，调用方回退硬编码列表）</summary>
@@ -1831,24 +2265,68 @@ public class NeteaseOpenApiClient
     public Task<List<SongComment>> GetPlaylistHotCommentsAsync(string playlistId, int limit = 20)
         => GetCommentsAsync(playlistId, limit, offset: 0, hot: true, "A_PL_0_");
 
+    /// <summary>最近一次评论请求的服务端总数（0 = 未返回）；供评论页标题显示"共 N 条"</summary>
+    public int LastCommentsTotal { get; private set; }
+
+    /// <summary>最近一次评论请求服务端是否还有更多（用于"加载更多"按钮）</summary>
+    public bool LastCommentsHasMore { get; private set; }
+
     private async Task<List<SongComment>> GetCommentsAsync(string songId, int limit, int offset, bool hot,
         string resourcePrefix = "R_SO_4_")
     {
         var list = new List<SongComment>();
         if (string.IsNullOrWhiteSpace(songId)) return list;
-        var rid = $"{resourcePrefix}{songId}";
-        var url = hot
-            ? $"https://music.163.com/api/v1/resource/hot/comments/{rid}?rid={rid}&limit={limit}"
-            : $"https://music.163.com/api/v1/resource/comments/{rid}?rid={rid}&limit={limit}&offset={offset}";
+        LastCommentsTotal = 0;
+        LastCommentsHasMore = false;
         try
         {
-            using var doc = await GetJsonAsync(url);
-            if (doc == null) return list;
-            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
-                return list;
+            // 官方契约（api-enhanced 的 comment_hot / comment_music / comment_playlist，均走 weapi）：
+            //   热门：POST /weapi/v1/resource/hotcomments/{前缀}{id}   —— 注意是 hotcomments、且前缀与 id 之间无斜杠
+            //   最新：POST /weapi/v1/resource/comments/{前缀}{id}
+            //   参数：rid 传**原始 id**（前缀只出现在 path 里），并且**必须带 beforeTime=0**
+            // 旧实现三处都不对（热门写成 /hot/comments/ → 404；最新缺 beforeTime → 歌单 400；
+            // 且走明文 GET），异常又被 catch 吞掉 → 评论区永远显示"暂无评论"。
+            var path = hot
+                ? $"/api/v1/resource/hotcomments/{resourcePrefix}{songId}"
+                : $"/api/v1/resource/comments/{resourcePrefix}{songId}";
+            var json = await NeteaseWeapi.RequestAsync(_http, path, new Dictionary<string, object>
+            {
+                ["rid"] = songId,
+                ["limit"] = limit,
+                ["offset"] = offset,
+                ["beforeTime"] = 0,
+            }, _cookie).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(json)) return list;
+
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            // 评论数组在**顶层**：{"code":200,"total":70430,"more":true,"hotComments":[...],"comments":[...]}
+            // 旧实现按 data.hotComments / data.comments 解析（没有 data 包装）→ 永远取不到，
+            // 表现为评论区一直"暂无评论"（歌曲实际有数万条）。
             var arrField = hot ? "hotComments" : "comments";
-            if (!data.TryGetProperty(arrField, out var arr) || arr.ValueKind != JsonValueKind.Array)
+            JsonElement arr;
+            if (root.TryGetProperty(arrField, out var topArr) && topArr.ValueKind == JsonValueKind.Array)
+            {
+                arr = topArr;
+            }
+            else if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
+                     && data.TryGetProperty(arrField, out var nestedArr) && nestedArr.ValueKind == JsonValueKind.Array)
+            {
+                arr = nestedArr;   // 兼容带 data 包装的返回
+            }
+            else
+            {
+                NeteaseLoginLog.Write($"评论返回结构异常（{resourcePrefix}{songId}）：无 {arrField} 字段");
                 return list;
+            }
+
+            if (root.TryGetProperty("total", out var totalEl) && totalEl.ValueKind == JsonValueKind.Number
+                && totalEl.TryGetInt32(out var total))
+                LastCommentsTotal = total;
+            if (root.TryGetProperty("more", out var moreEl)
+                && (moreEl.ValueKind == JsonValueKind.True || moreEl.ValueKind == JsonValueKind.False))
+                LastCommentsHasMore = moreEl.GetBoolean();
+
             foreach (var c in arr.EnumerateArray())
             {
                 var item = new SongComment
@@ -1867,7 +2345,10 @@ public class NeteaseOpenApiClient
                     list.Add(item);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"获取评论失败（{resourcePrefix}{songId}，{(hot ? "热门" : "最新")}）：{ex.Message}");
+        }
         return list;
     }
 
@@ -1898,6 +2379,7 @@ public class NeteaseOpenApiClient
             if (doc != null && IsLoginRequired(doc.RootElement)
                 && !string.IsNullOrWhiteSpace(_cookie))
             {
+                NeteaseLoginLog.Write($"接口返回 301（需要登录）：{url} → 尝试静默续期");
                 if (await RefreshLoginTokenAsync().ConfigureAwait(false))
                 {
                     doc = await SendJsonAsync(HttpMethod.Get, url).ConfigureAwait(false);

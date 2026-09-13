@@ -19,9 +19,16 @@ internal static class NeteaseNav
         catch { return null; }
     }
 
-    /// <summary>Push 插件子页面：Shell 导航栈优先；桌面无 Shell 用窗口级模态浮层</summary>
+    /// <summary>Push 插件子页面：桌面壳层优先交给宿主内嵌到主内容区；Shell 走导航栈；其余用模态浮层</summary>
     public static async Task PushAsync(Page page)
     {
+        // 桌面壳层（Windows 无 Shell）：内嵌到主内容区。
+        // 原实现走 PushModalAsync → 整窗模态会盖住侧栏与底部播放条（用户反馈"歌单详情页挡住左侧栏"）。
+        if (SubPageHost() is { CanEmbed: true } embedHost)
+        {
+            await embedHost.OpenEmbeddedAsync(page);
+            return;
+        }
         var shell = TryGetShell();
         if (shell != null)
         {
@@ -48,6 +55,14 @@ internal static class NeteaseNav
             await shell.Navigation.PopAsync();
             return;
         }
+        // 桌面内嵌模式：优先走宿主「内嵌页栈」逐级返回。
+        // 必须放在 INavigationService.GoBackAsync 之前——后者只把内容区恢复成 tab 根内容，
+        // 表现为"从二级页返回直接退出插件"（用户反馈）。
+        if (SubPageHost() is { CanEmbed: true } embedHost)
+        {
+            await embedHost.CloseEmbeddedAsync();
+            return;
+        }
         if (services != null && services.GetService<INavigationService>() is { } hostNav)
         {
             await hostNav.GoBackAsync();
@@ -59,4 +74,26 @@ internal static class NeteaseNav
 
     private static INavigation? WindowNav()
         => Application.Current?.Windows.FirstOrDefault()?.Page?.Navigation;
+
+    /// <summary>
+    /// 用 <paramref name="target"/> 替换当前登录子页：先关闭自己再推入目标页。
+    /// <para>
+    /// 登录页之间切换必须"替换"而不是叠加：若叠成 插件页 → 扫码页 → 手机号登录页，
+    /// 登录成功只退一层就会停在另一个登录页（用户反馈"登录成功却回到扫码页"）。
+    /// 保持登录页始终只有一层，成功后退一次必然回到插件主页。
+    /// </para>
+    /// </summary>
+    public static async Task ReplaceAsync(Page self, Page target, IServiceProvider? services = null)
+    {
+        await PopAsync(self, services);
+        await Task.Delay(180);   // 等关闭动画/内嵌栈恢复完成，避免紧接着的推入被覆盖
+        await PushAsync(target);
+    }
+
+    /// <summary>宿主内嵌能力（未注册/不可用时返回 null，调用方回退原有推页方式）</summary>
+    private static ISubPageHost? SubPageHost()
+    {
+        try { return Microsoft.Maui.IPlatformApplication.Current?.Services?.GetService<ISubPageHost>(); }
+        catch { return null; }
+    }
 }

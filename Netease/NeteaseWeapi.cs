@@ -24,11 +24,23 @@ internal static class NeteaseWeapi
 
     private static readonly Random _rnd = new();
 
+    /// <summary>weapi 调用结果：响应 JSON 文本 + 响应 Set-Cookie（登录靠它取新会话）</summary>
+    internal sealed class WeapiResult
+    {
+        public string? Body { get; init; }
+        public IReadOnlyList<string> SetCookies { get; init; } = Array.Empty<string>();
+    }
+
     /// <summary>
     /// 调用 weapi 接口，返回响应 JSON 文本；失败返回 null。
     /// <paramref name="path"/> 形如 /api/v1/discovery/simiSong（内部自动去掉 /api/ 前缀拼 /weapi/xxx）。
     /// </summary>
     public static async Task<string?> RequestAsync(HttpClient http, string path,
+        IReadOnlyDictionary<string, object> body, string? userCookie)
+        => (await RequestDetailedAsync(http, path, body, userCookie).ConfigureAwait(false)).Body;
+
+    /// <summary>调用 weapi 接口，返回响应 JSON **与 Set-Cookie**（手机号登录 /api/w/login/cellphone 用）。</summary>
+    public static async Task<WeapiResult> RequestDetailedAsync(HttpClient http, string path,
         IReadOnlyDictionary<string, object> body, string? userCookie)
     {
         try
@@ -58,10 +70,24 @@ internal static class NeteaseWeapi
                 req.Headers.TryAddWithoutValidation("Cookie", userCookie);
 
             using var resp = await http.SendAsync(req).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
-            return await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                NeteaseLoginLog.Write($"weapi {path} HTTP {(int)resp.StatusCode}");
+                return new WeapiResult();
+            }
+
+            var setCookies = new List<string>();
+            if (resp.Headers.TryGetValues("Set-Cookie", out var values))
+                foreach (var v in values) setCookies.Add(v);
+
+            var text = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            return new WeapiResult { Body = text, SetCookies = setCookies };
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            NeteaseLoginLog.Write($"weapi {path} 异常: {ex.Message}");
+            return new WeapiResult();
+        }
     }
 
     // ── 内部 ──

@@ -26,9 +26,8 @@ public class NeteaseSimilarPlaylistsPage : ContentPage
         _onOpenPlaylist = onOpenPlaylist;
 
         Title = "相似歌单";
-        BackgroundColor = Application.Current?.Resources.TryGetValue("WindowBackgroundColor", out var bg) == true
-            ? (Color)bg
-            : Color.FromArgb("#0B0D20");
+        // 统一不透明深色底（与歌单详情页一致）：宿主 WindowBackgroundColor 可能为全透明
+        BackgroundColor = NeteaseUiKit.PageBackground;
 
         var titleLabel = new Label
         {

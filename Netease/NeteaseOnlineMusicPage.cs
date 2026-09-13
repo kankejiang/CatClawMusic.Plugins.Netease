@@ -63,9 +63,9 @@ public class NeteaseOnlineMusicPage : ContentPage
         BindingContext = _vm;
 
         Title = "网易云音乐";
-        BackgroundColor = Application.Current?.Resources.TryGetValue("WindowBackgroundColor", out var bg) == true
-            ? (Color)bg
-            : Color.FromArgb("#0B0D20");
+        // 统一不透明深色底（与歌单详情页一致）：原先取宿主 WindowBackgroundColor，
+        // 该资源在宿主启用自定义/封面背景时为全透明 → 整页透明、透出下层内容
+        BackgroundColor = NeteaseUiKit.PageBackground;
 
         // ── 顶部：返回 + 标题 + 音质 + 账号 ──
         var backButton = CreateBackButton();
@@ -191,7 +191,8 @@ public class NeteaseOnlineMusicPage : ContentPage
         // ── 分类 chips（水平滚动，仅歌单广场可见）──
         var categoriesLayout = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 4, 16, 6) };
         categoriesLayout.SetBinding(HorizontalStackLayout.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
-        BindableLayout.SetItemsSource(categoriesLayout, _vm.Categories);
+        // 官方版式：只显示常用分类，其余收进「更多分类 ▾」弹层（绑 VisibleCategories 而非全量 Categories）
+        BindableLayout.SetItemsSource(categoriesLayout, _vm.VisibleCategories);
         BindableLayout.SetItemTemplate(categoriesLayout,
             NeteaseUiKit.CreateCategoryChipTemplate(_vm, nameof(NeteaseOnlineMusicViewModel.SelectCategoryCommand), nameof(CategoryChipItem.Name)));
 
@@ -203,6 +204,66 @@ public class NeteaseOnlineMusicPage : ContentPage
             Content = categoriesLayout,
         };
         categoriesScroll.SetBinding(ScrollView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
+
+        // ── 「更多分类」展开面板（官方同款：分组 tab 带下划线 + 组内分类 chips 平铺）──
+        var groupTabs = new HorizontalStackLayout { Spacing = 18, Padding = new Thickness(16, 6, 16, 2) };
+        var groupViews = new List<(Label Label, BoxView Underline)>();
+        void RefreshGroupTabStyles()
+        {
+            for (var i = 0; i < groupViews.Count; i++)
+            {
+                var on = i < _vm.CategoryGroupNames.Count && _vm.CategoryGroupNames[i] == _vm.SelectedGroup;
+                groupViews[i].Label.TextColor = on ? Color.FromArgb("#FF8FB8") : Color.FromArgb("#888888");
+                groupViews[i].Underline.IsVisible = on;
+            }
+        }
+        void RebuildGroupTabs()
+        {
+            groupTabs.Children.Clear();
+            groupViews.Clear();
+            foreach (var g in _vm.CategoryGroupNames)
+            {
+                var name = g;
+                var lbl = new Label { Text = name, FontSize = 13, FontFamily = "OpenSansSemibold", HorizontalOptions = LayoutOptions.Center };
+                lbl.SetDynamicResource(Label.TextColorProperty, "TextPrimaryColor");
+                var ul = new BoxView { HeightRequest = 2, CornerRadius = 1, WidthRequest = Math.Max(18, name.Length * 14), HorizontalOptions = LayoutOptions.Center, Margin = new Thickness(0, 3, 0, 0), IsVisible = false };
+                ul.SetDynamicResource(BoxView.ColorProperty, "PrimaryColor");
+                var tabHost = new VerticalStackLayout { Spacing = 0, HorizontalOptions = LayoutOptions.Center, Children = { lbl, ul } };
+                var tap = new TapGestureRecognizer();
+                tap.Tapped += (_, _) => { _vm.SelectCategoryGroup(name); RefreshGroupTabStyles(); };
+                tabHost.GestureRecognizers.Add(tap);
+                groupTabs.Children.Add(tabHost);
+                groupViews.Add((lbl, ul));
+            }
+            RefreshGroupTabStyles();
+        }
+        _vm.CategoryGroupNames.CollectionChanged += (_, _) =>
+        {
+            if (Handler == null) return;   // 同上：跳过已卸载的旧页面
+            groupTabs.Dispatcher?.Dispatch(RebuildGroupTabs);
+        };
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (Handler == null) return;   // 同上：跳过已卸载的旧页面
+            if (e.PropertyName == nameof(NeteaseOnlineMusicViewModel.SelectedGroup)) RefreshGroupTabStyles();
+        };
+
+        var groupChips = new HorizontalStackLayout { Spacing = 6, Padding = new Thickness(16, 4, 16, 10) };
+        BindableLayout.SetItemsSource(groupChips, _vm.ActiveGroupCategories);
+        BindableLayout.SetItemTemplate(groupChips,
+            NeteaseUiKit.CreateCategoryChipTemplate(_vm, nameof(NeteaseOnlineMusicViewModel.SelectCategoryCommand), nameof(CategoryChipItem.Name)));
+        var groupChipsScroll = new ScrollView
+        {
+            Orientation = ScrollOrientation.Horizontal,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
+            Content = groupChips,
+        };
+        var morePanel = new VerticalStackLayout { Spacing = 0, Children = { groupTabs, groupChipsScroll } };
+        morePanel.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.MoreCategoriesExpanded));
+
+        // chips 行 + 展开面板同一个容器（整体随 ShowCategories 显隐；面板再受 MoreCategoriesExpanded 控制）
+        var squareHeader = new VerticalStackLayout { Spacing = 0, Children = { categoriesScroll, morePanel } };
+        squareHeader.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowCategories));
 
         // ── 歌单网格（分页加载；分块行方案：外层虚拟化「行」，每行 N 张定宽卡片，
         //    列数由 VM 按可用宽度推导。WinUI 上 GridItemsLayout.Span 不可靠，
@@ -218,7 +279,8 @@ public class NeteaseOnlineMusicPage : ContentPage
             Padding = new Thickness(10, 5),
             StrokeThickness = 0,
             StrokeShape = new RoundRectangle { CornerRadius = 12 },
-            Content = new Label { Text = "‹ 返回", FontSize = 12 },
+            // 与页头「‹ 网易云音乐」（退出插件）区分层级：这里只回上一层列表/精选视图
+            Content = new Label { Text = "‹ 返回上一级", FontSize = 12 },
         };
         songsBackButton.SetDynamicResource(Border.BackgroundColorProperty, "SurfaceColor");
         var songsBackLabel = (Label)songsBackButton.Content!;
@@ -298,7 +360,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             Padding = new Thickness(16, 4, 16, 8),
             Children = { songsBackButton, songsTitleLabel, playAllButton, historyDailyButton, similarButton },
         };
-        songsHeader.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        songsHeader.BackgroundColor = NeteaseUiKit.PageBackground;
         Grid.SetColumn(songsTitleLabel, 1);
         Grid.SetColumn(playAllButton, 2);
         Grid.SetColumn(historyDailyButton, 3);
@@ -355,7 +417,9 @@ public class NeteaseOnlineMusicPage : ContentPage
             var tabTap = new TapGestureRecognizer();
             tabTap.Tapped += (_, _) =>
             {
-                _vm.SelectedTabIndex = idx;
+                // 走 VM 的 SelectTab：同 tab 重复点击时，若该 tab 承载的不是默认内容会恢复默认内容
+                // （如"我的歌单"占用了广场 tab 时，再点「歌单广场」应回到广场歌单）
+                _vm.SelectTab(idx);
                 RefreshTabStyles();
             };
             tabHost.GestureRecognizers.Add(tabTap);
@@ -365,6 +429,10 @@ public class NeteaseOnlineMusicPage : ContentPage
         RefreshTabStyles();
         _vm.PropertyChanged += (_, e) =>
         {
+            // ⚠ VM 是**插件级单例**，页面每次进入都会新建：旧页面的处理器会一直挂在 VM 上。
+            // 这里用 Handler 判断页面是否仍挂载，已卸载的直接跳过 —— 否则每进一次插件页就多一层
+            // 无用的 tab 样式刷新（内含 SetDynamicResource 查找），表现为"返回后再进入很卡"。
+            if (Handler == null) return;
             if (e.PropertyName == nameof(NeteaseOnlineMusicViewModel.SelectedTabIndex)) RefreshTabStyles();
         };
 
@@ -392,58 +460,43 @@ public class NeteaseOnlineMusicPage : ContentPage
                 new() { Height = GridLength.Auto },
                 new() { Height = GridLength.Star },
             },
-            Children = { categoriesScroll, _playlistsView },
+            Children = { squareHeader, _playlistsView },
         };
-        Grid.SetRow(categoriesScroll, 0);
+        Grid.SetRow(squareHeader, 0);
         Grid.SetRow(_playlistsView, 1);
         _squareHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSquare));
 
-        // ── 排行榜 tab：榜单色块横滑 + 官方榜 Top3 卡（虚拟化：星号行 CollectionView 分批上屏）──
-        var colorCardsHost = new HorizontalStackLayout { Spacing = 10, Padding = new Thickness(16, 2, 16, 6) };
-        _vm.ToplistColors.CollectionChanged += (_, _) => colorCardsHost.Dispatcher?.Dispatch(() =>
-        {
-            colorCardsHost.Children.Clear();
-            for (var i = 0; i < _vm.ToplistColors.Count; i++)
-            {
-                // 色块不在 BindableLayout 内（要按索引取渐变色板），需手动给 BindingContext 才能让 Name 绑定生效
-                var card = NeteaseUiKit.CreateToplistColorCard(i, _vm.OpenToplistCommand);
-                card.BindingContext = _vm.ToplistColors[i];
-                colorCardsHost.Children.Add(card);
-            }
-        });
-        // 官方榜 Top3 卡：CollectionView 星号行（有界高度才有虚拟化——原 VerticalStackLayout BindableLayout
-        // 一次性物化全部 ~30 张卡 + ~100 行歌曲，进入排行榜 tab 必卡）；滚到底自动追加下一批
-        var blocksView = new CollectionView
+        // ── 排行榜 tab：全量榜单卡片折行铺满（官方版式）──
+        // 原先的「6 张色块横滑」宿主已废弃（不再挂到视图树），但它曾订阅 VM 的
+        // ToplistColors.CollectionChanged —— VM 是**插件级单例**，旧页面的处理器会一直挂着，
+        // 于是每次加载榜单都会去重建一个不可见的控件，且随进入次数线性累积（越进越卡）。
+        // 全量榜单卡片折行铺满（官方版式）：外层 CollectionView 虚拟化「行」，行内按可用宽度排 N 张定宽彩卡。
+        // 弃用 Top3 块列表：那需要**每个榜单一次请求**补 Top3（所以才必须分批上屏），改为一次请求全部铺出。
+        var toplistCardView = new CollectionView
         {
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
             SelectionMode = SelectionMode.None,
-            Margin = new Thickness(14, 0, 14, 0),
+            Margin = new Thickness(0, 4, 0, 0),
             ItemsUpdatingScrollMode = ItemsUpdatingScrollMode.KeepScrollOffset,
-            RemainingItemsThreshold = 2,
         };
-        blocksView.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
-        blocksView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.ToplistBlocks));
-        blocksView.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateToplistTop3Card(_vm.OpenToplistCommand));
-        blocksView.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreToplistsAsync();
-        var toplistHeader = BuildSectionHeader("榜单推荐", null, null);
-        var toplistColorsScroll = new ScrollView { Orientation = ScrollOrientation.Horizontal, HorizontalScrollBarVisibility = ScrollBarVisibility.Never, Content = colorCardsHost };
-        var officialHeader = BuildSectionHeader("官方榜", null, null);
+        toplistCardView.BackgroundColor = NeteaseUiKit.PageBackground;
+        toplistCardView.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.ToplistCardRows));
+        toplistCardView.ItemTemplate = new DataTemplate(CreateToplistCardRowTemplate);
+        // 列数直接挂网格自身 SizeChanged（与歌手 tab 同款：contentGrid.SizeChanged 在部分机型上不可靠）
+        toplistCardView.SizeChanged += (_, _) => _vm.SetToplistGridWidth(toplistCardView.Width - 40);   // 减去行左右 Padding 20+20
+        var allToplistHeader = BuildSectionHeader("全部榜单", null, null);
         var toplistsHost = new Grid
         {
             RowDefinitions = new RowDefinitionCollection
             {
-                new() { Height = GridLength.Auto }, // 榜单推荐标题
-                new() { Height = GridLength.Auto }, // 色块横滑
-                new() { Height = GridLength.Auto }, // 官方榜标题
-                new() { Height = GridLength.Star }, // Top3 卡（虚拟化）
+                new() { Height = GridLength.Auto }, // 标题
+                new() { Height = GridLength.Star }, // 卡片网格（虚拟化）
             },
-            Children = { toplistHeader, toplistColorsScroll, officialHeader, blocksView },
+            Children = { allToplistHeader, toplistCardView },
         };
-        Grid.SetRow(toplistHeader, 0);
-        Grid.SetRow(toplistColorsScroll, 1);
-        Grid.SetRow(officialHeader, 2);
-        Grid.SetRow(blocksView, 3);
-        toplistsHost.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        Grid.SetRow(allToplistHeader, 0);
+        Grid.SetRow(toplistCardView, 1);
+        toplistsHost.BackgroundColor = NeteaseUiKit.PageBackground;
         toplistsHost.SetBinding(VisualElement.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowToplists));
         _toplistsHost = toplistsHost;
 
@@ -553,7 +606,7 @@ public class NeteaseOnlineMusicPage : ContentPage
         _vm.Detach();
     }
 
-    /// <summary>点击账号按钮：已登录则二次确认后退出，未登录则跳转 WebView 登录页</summary>
+    /// <summary>点击账号按钮：已登录则二次确认后退出；未登录则打开扫码登录页（可退回网页登录）</summary>
     private async void OnAccountTapped(object? sender, EventArgs e)
     {
         if (_vm.IsLoggedIn)
@@ -567,20 +620,27 @@ public class NeteaseOnlineMusicPage : ContentPage
             if (ok) await _vm.LogoutAsync();
             return;
         }
-        if (!_vm.SupportsLogin || _vm.CurrentLoginInfo == null) return;
 
+        // 扫码登录（插件自有页面）：网页版会话无法被 /eapi/login/token/refresh 续期
+        // （实测有效 web cookie 亦返回 301），只有扫码拿到的**应用态会话**能长期保活。
         try
         {
-            // 跳转宿主的 WebView 登录页。
-            // 宿主 WebViewLoginViewModel 通过 platform 参数匹配 IOnlineMusicPlugin.PlatformName，
-            // 网易云插件的 PlatformName 固定为 "netease"。
-            // 注意：本插件页由 OpenPluginEntryAsync 经 shell.Navigation.PushAsync 推入导航栈，
-            // 当前页不是 Shell 路由节点——Shell.Current.GoToAsync 会在 GetOrCreateFromRoute
-            // 找不到正确父节点而 NRE。因此统一走 NavigationService（桌面嵌入/Shell 都由宿主处理）。
+            var qrPage = new NeteaseQrLoginPage(_vm.Plugin, _services, () => _vm.LoadLoginStateAsync());
+            await NeteaseNav.PushAsync(qrPage);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("NeteasePlugin", $"[Login] 打开扫码登录页失败，回退网页登录: {ex.Message}");
+        }
+
+        // 退路：宿主 WebView 网页登录（会话不持久，但风控场景仍可用）
+        try
+        {
             var nav = _services.GetService<INavigationService>();
             if (nav != null)
             {
-                await nav.NavigateToAsync($"webviewlogin?platform=netease");
+                await nav.NavigateToAsync("webviewlogin?platform=netease");
                 return;
             }
 
@@ -670,7 +730,7 @@ public class NeteaseOnlineMusicPage : ContentPage
             RemainingItemsThreshold = 6,
         };
         // 不透明背景：视觉折叠——本视图可见时完全盖住同层叠放的 tab 内容（根因见 contentGrid 注释）
-        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        view.BackgroundColor = NeteaseUiKit.PageBackground;
         view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.PlaylistRows));
         view.ItemTemplate = new DataTemplate(CreatePlaylistRowTemplate);
@@ -688,10 +748,34 @@ public class NeteaseOnlineMusicPage : ContentPage
             Spacing = 10,
             Margin = new Thickness(16, 0, 16, 10), // 左右 16 由行自身承担（网格 Margin 已归零，见 CreatePlaylistsView）
         };
-        BindableLayout.SetItemTemplate(row, new DataTemplate(() => NeteaseUiKit.CreatePlaylistItemTemplate(
+        // 官方广场卡片：封面 + 左上播放量角标 + 标题（原为「标题 + N 首」的无角标卡）
+        BindableLayout.SetItemTemplate(row, new DataTemplate(() => NeteaseUiKit.CreatePlaylistCornerCard(
             NeteaseOnlineMusicViewModel.PlaylistCardWidth, _vm.OpenPlaylistCardCommand)));
         row.SetBinding(BindableLayout.ItemsSourceProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.PlaylistGridRow.Items)));
         return row;
+    }
+
+    /// <summary>榜单卡折行：一行 HorizontalStackLayout 排满定宽彩色卡。
+    /// 配色按行内索引轮换（色卡工厂要索引才能取渐变色板；BindableLayout 会自动把卡片
+    /// BindingContext 设为该榜单对象，Name 绑定与点击命令参数无需手工处理）。</summary>
+    private View CreateToplistCardRowTemplate()
+    {
+        // ⚠ WinUI 的 CollectionView **不把 item 根视图的 Margin 计入行高**：横向间隔靠 Spacing 没问题，
+        // 但纵向用 Margin 会让上下两行贴死（用户反馈"卡片上下完全贴在一起"）。
+        // 纵向间隔必须用 Padding（它属于布局本身），并显式给出行高以保证稳定。
+        var cards = new HorizontalStackLayout { Spacing = NeteaseOnlineMusicViewModel.ToplistCardSpacing };
+        var colorIndex = 0;
+        BindableLayout.SetItemTemplate(cards, new DataTemplate(() =>
+            NeteaseUiKit.CreateToplistColorCard(colorIndex++, _vm.OpenToplistCommand,
+                _vm.ToplistCardWidth, _vm.ToplistCardHeight)));
+        cards.SetBinding(BindableLayout.ItemsSourceProperty, new Binding(nameof(NeteaseOnlineMusicViewModel.PlaylistGridRow.Items)));
+
+        return new Grid
+        {
+            Padding = new Thickness(20, 8, 20, 20),        // 上 8 / 下 20 → 行间距 28
+            HeightRequest = _vm.ToplistCardHeight + 28,     // 卡高 + 上下 Padding
+            Children = { cards },
+        };
     }
 
     /// <summary>歌手列表视图（纯线性，SelectionChanged 打开歌手页）</summary>
@@ -699,12 +783,12 @@ public class NeteaseOnlineMusicPage : ContentPage
     {
         var view = new CollectionView
         {
-            SelectionMode = SelectionMode.Single,
+            SelectionMode = SelectionMode.None,
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Vertical),
             Margin = new Thickness(0),
         };
         // 不透明背景：视觉折叠（见 contentGrid 注释）
-        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        view.BackgroundColor = NeteaseUiKit.PageBackground;
         view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowArtists));
         view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Artists));
         view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateArtistItemTemplate());
@@ -723,21 +807,15 @@ public class NeteaseOnlineMusicPage : ContentPage
             RemainingItemsThreshold = 8,
         };
         // 不透明背景：视觉折叠（见 contentGrid 注释）
-        view.SetDynamicResource(VisualElement.BackgroundColorProperty, "WindowBackgroundColor");
+        view.BackgroundColor = NeteaseUiKit.PageBackground;
         view.RemainingItemsThresholdReached += async (_, _) => await _vm.LoadMoreAsync();
         view.SetBinding(CollectionView.IsVisibleProperty, nameof(NeteaseOnlineMusicViewModel.ShowSongs));
         view.SetBinding(CollectionView.ItemsSourceProperty, nameof(NeteaseOnlineMusicViewModel.Songs));
+        // 统一歌单详情页行样式：内联操作（红心/垃圾桶/相似/MV/评论）全部收进「⋮」菜单
         view.ItemTemplate = new DataTemplate(() => NeteaseUiKit.CreateSongItemTemplate(new NeteaseUiKit.SongRowOptions
         {
-            HeartCommand = _vm.ToggleLikeCommand,
-            HeartVisibleSource = _vm,
-            HeartVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsLoggedIn),
-            TrashCommand = _vm.TrashFmSongCommand,
-            TrashVisibleSource = _vm,
-            TrashVisibleProperty = nameof(NeteaseOnlineMusicViewModel.IsFmMode),
-            SimilarCommand = _vm.LoadSimilarSongsCommand,
-            MvCommand = _vm.OpenMvCommand,
-            CommentCommand = _vm.OpenCommentsCommand,
+            MenuCommand = _vm.SongMenuCommand,
+            PlayCommand = new Microsoft.Maui.Controls.Command<OnlineSong>(async s => await _vm.PlaySongAsync(s)),
         }));
         view.SelectionChanged += OnSongSelected;
         // Header 与视图同生死，避免 Grid Row 5 多元素重叠渲染（曾导致红条覆盖歌单列表）
